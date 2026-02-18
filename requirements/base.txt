@@ -1,0 +1,30 @@
+Django>=5.0,<6.0
+djangorestframework>=3.15
+djangorestframework-simplejwt>=5.3
+django-environ>=0.11
+django-filter>=24.1
+drf-spectacular>=0.27
+django-cors-headers>=4.3
+psycopg[binary]>=3.1
+celery>=5.3
+django-celery-beat>=2.6
+django-celery-results>=2.5
+redis>=5.0
+channels>=4.0
+channels-redis>=4.2
+imagekitio>=4.1
+structlog>=24.1
+django-guardian>=2.4
+django-fsm>=2.8
+
+# AI Proctoring dependencies
+
+# Enhanced# AI/ML (Lightweight GenAI)
+google-generativeai>=0.3.2
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# YOLO Object Detection (Local inference - no API costs)
+ultralytics>=8.0.0
+opencv-python-headless>=4.8.0
+

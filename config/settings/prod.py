@@ -1,0 +1,20 @@
+"\"\"\"Production settings.\"\"\""
+
+from .base import *  # noqa
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+SECURE_REFERRER_POLICY = "strict-origin"
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+CORS_ALLOW_ALL_ORIGINS = False
+
+REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = (  # type: ignore[index]
+    "rest_framework.renderers.JSONRenderer",
+)
