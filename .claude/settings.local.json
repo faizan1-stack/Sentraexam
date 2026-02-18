@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(pkill:*)",
+      "Bash(taskkill:*)",
+      "Bash(xargs sed:*)",
+      "Bash(docker-compose exec web python manage.py showmigrations:*)",
+      "Bash(docker-compose exec backend python:*)",
+      "Bash(curl:*)",
+      "Bash(npm run build)",
+      "Bash(docker-compose logs:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

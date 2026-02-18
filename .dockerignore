@@ -1,0 +1,36 @@
+# General
+.git
+.gitignore
+.DS_Store
+.idea
+.vscode
+
+# Python
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+.venv
+venv
+
+# Env & local
+.env
+.env.*
+
+# Django runtime artifacts
+media
+staticfiles
+
+# Tests (not needed in runtime image)
+tests
+
+# Frontend heavy artifacts
+frontend/node_modules
+frontend/dist
+frontend/.vite
+frontend/.cache

@@ -1,0 +1,397 @@
+================================================================================
+SENTRAEXAM - MERMAID DIAGRAMS (A4 OPTIMIZED)
+================================================================================
+These diagrams are optimized to fit on A4 paper. Copy to https://mermaid.live
+
+================================================================================
+1. UML USE CASE DIAGRAM (A4)
+================================================================================
+
+flowchart LR
+    subgraph Actors
+        A((Admin))
+        H((HOD))
+        T((Teacher))
+        S((Student))
+    end
+
+    subgraph UC["Sentraexam System"]
+        U1[Manage Users]
+        U2[Manage Depts]
+        U3[Manage Courses]
+        U4[Create Assessment]
+        U5[Approve Assessment]
+        U6[Take Exam]
+        U7[Grade Work]
+        U8[Proctor Exam]
+        U9[Announcements]
+    end
+
+    A --- U1 & U2 & U3 & U5 & U9
+    H --- U1 & U3 & U5 & U9
+    T --- U4 & U7 & U8
+    S --- U6
+
+================================================================================
+2. SYSTEM ARCHITECTURE DIAGRAM (A4)
+================================================================================
+
+flowchart TB
+    subgraph FE["Frontend"]
+        R[React/TS + Vite]
+        AD[Ant Design]
+        TQ[TanStack Query]
+    end
+
+    subgraph BE["Backend"]
+        API[Django REST + JWT]
+        subgraph Apps
+            U[Users]
+            D[Departments]
+            C[Courses]
+            AS[Assessments]
+            P[Proctoring]
+            N[Notifications]
+        end
+    end
+
+    subgraph AI["AI Layer"]
+        Y[YOLOv8]
+        G[Gemini API]
+    end
+
+    subgraph DB["Storage"]
+        S[(SQLite/PostgreSQL)]
+        M[(Media Files)]
+    end
+
+    R --> AD --> TQ --> API
+    API --> Apps
+    P --> Y & G
+    Apps --> S & M
+
+================================================================================
+3. DFD LEVEL 0 - CONTEXT DIAGRAM (A4)
+================================================================================
+
+flowchart LR
+    A((Admin))
+    H((HOD))
+    T((Teacher))
+    S((Student))
+
+    SYS[["SENTRAEXAM"]]
+
+    E[Email]
+    AI[AI Services]
+
+    A -->|Manage| SYS
+    H -->|Approve| SYS
+    T -->|Create/Grade| SYS
+    S -->|Take Exam| SYS
+
+    SYS -->|Reports| A & H & T
+    SYS -->|Grades| S
+    SYS <--> E & AI
+
+================================================================================
+4. DFD LEVEL 1 DIAGRAM (A4)
+================================================================================
+
+flowchart TB
+    subgraph EXT["External"]
+        A((Admin))
+        H((HOD))
+        T((Teacher))
+        S((Student))
+    end
+
+    P1[1.0 User Mgmt]
+    P2[2.0 Course Mgmt]
+    P3[3.0 Assessment]
+    P4[4.0 Proctoring]
+    P5[5.0 Grading]
+
+    D1[(Users)]
+    D2[(Courses)]
+    D3[(Exams)]
+    D4[(Violations)]
+    D5[(Grades)]
+
+    A --> P1
+    H --> P2
+    T --> P3 & P5
+    S --> P3 & P4
+
+    P1 <--> D1
+    P2 <--> D2
+    P3 <--> D3
+    P4 --> D4
+    P5 <--> D5
+
+================================================================================
+5. ERD DIAGRAM (A4)
+================================================================================
+
+erDiagram
+    USER {
+        uuid id PK
+        string email
+        string role
+        uuid dept_id FK
+    }
+
+    DEPARTMENT {
+        uuid id PK
+        string name
+        string code
+        uuid head_id FK
+    }
+
+    COURSE {
+        uuid id PK
+        string code
+        string title
+        uuid dept_id FK
+        uuid teacher_id FK
+    }
+
+    ENROLLMENT {
+        uuid id PK
+        uuid course_id FK
+        uuid student_id FK
+        string status
+    }
+
+    ASSESSMENT {
+        uuid id PK
+        string title
+        string type
+        string status
+        uuid course_id FK
+    }
+
+    SESSION {
+        uuid id PK
+        uuid assess_id FK
+        uuid student_id FK
+        datetime deadline
+        int violations
+    }
+
+    SUBMISSION {
+        uuid id PK
+        uuid assess_id FK
+        uuid student_id FK
+        decimal score
+    }
+
+    SNAPSHOT {
+        uuid id PK
+        uuid session_id FK
+        int persons
+        bool phone
+        bool violation
+    }
+
+    VIOLATION {
+        uuid id PK
+        uuid session_id FK
+        string type
+        float confidence
+    }
+
+    NOTIFICATION {
+        uuid id PK
+        uuid user_id FK
+        string subject
+        bool is_read
+    }
+
+    USER ||--o{ DEPARTMENT : belongs
+    DEPARTMENT ||--o{ COURSE : has
+    COURSE ||--o{ ENROLLMENT : has
+    USER ||--o{ ENROLLMENT : enrolled
+    COURSE ||--o{ ASSESSMENT : has
+    ASSESSMENT ||--o{ SESSION : has
+    SESSION ||--|| SUBMISSION : creates
+    SESSION ||--o{ SNAPSHOT : captures
+    SESSION ||--o{ VIOLATION : triggers
+    USER ||--o{ NOTIFICATION : receives
+
+================================================================================
+6. USE CASE DIAGRAM - DETAILED (A4)
+================================================================================
+
+flowchart TB
+    subgraph UM["User Mgmt"]
+        U1[Create User]
+        U2[Activate]
+        U3[Reset PWD]
+    end
+
+    subgraph CM["Course Mgmt"]
+        C1[Create Course]
+        C2[Enroll]
+        C3[Assign Teacher]
+    end
+
+    subgraph AM["Assessment"]
+        A1[Create Exam]
+        A2[Approve]
+        A3[Schedule]
+    end
+
+    subgraph EM["Exam Flow"]
+        E1[Start Session]
+        E2[Take Exam]
+        E3[Submit]
+    end
+
+    subgraph PM["Proctoring"]
+        P1[Capture]
+        P2[Detect]
+        P3[Terminate]
+    end
+
+    subgraph GM["Grading"]
+        G1[Grade]
+        G2[Feedback]
+        G3[View Grades]
+    end
+
+    Admin((A)) --> U1 & C1 & A2
+    HOD((H)) --> U1 & C1 & A2
+    Teacher((T)) --> A1 & A3 & G1 & G2
+    Student((S)) --> U2 & C2 & E1 & E2 & E3 & G3
+    AI((AI)) --> P1 & P2 & P3
+
+================================================================================
+7.1 SEQUENCE DIAGRAM - EXAM SESSION (A4)
+================================================================================
+
+sequenceDiagram
+    participant S as Student
+    participant F as Frontend
+    participant A as API
+    participant D as DB
+    participant AI as AI
+
+    S->>F: Start Exam
+    F->>A: POST /start-session
+    A->>D: Create Session
+    A-->>F: Session + Questions
+
+    loop Every 30s
+        F->>A: POST /snapshot
+        A->>AI: Analyze
+        AI-->>A: Results
+        alt Violation
+            A->>D: Log Violation
+            A-->>F: Warning
+            alt Max Reached
+                A->>D: Terminate
+                A-->>F: Auto-Submit
+            end
+        end
+    end
+
+    S->>F: Submit
+    F->>A: POST /submit
+    A->>D: Save Submission
+    A-->>F: Confirmed
+
+================================================================================
+7.2 SEQUENCE DIAGRAM - COURSE ENROLLMENT (A4)
+================================================================================
+
+sequenceDiagram
+    participant S as Student
+    participant F as Frontend
+    participant A as API
+    participant D as DB
+
+    S->>F: Open Enroll Page
+    F->>A: GET /courses?active
+    A->>D: Query Courses
+    A-->>F: Course List
+    F->>S: Show Courses
+
+    S->>F: Click Enroll
+    F->>A: POST /enroll
+    A->>A: Check Department
+
+    alt Invalid Dept
+        A-->>F: Error
+    else Valid
+        A->>D: Create Enrollment
+        A-->>F: Success
+    end
+
+================================================================================
+7.3 SEQUENCE DIAGRAM - ASSESSMENT APPROVAL (A4)
+================================================================================
+
+sequenceDiagram
+    participant T as Teacher
+    participant H as HOD
+    participant A as API
+    participant D as DB
+
+    T->>A: POST /assessment (DRAFT)
+    A->>D: Create
+    A-->>T: Created
+
+    T->>A: POST /submit
+    A->>D: Status=SUBMITTED
+    A->>D: Notify HOD
+    A-->>T: Pending
+
+    H->>A: GET /pending
+    A-->>H: Assessment List
+
+    H->>A: POST /approve
+    A->>D: Status=APPROVED
+    A->>D: Notify Teacher
+    A-->>H: Approved
+
+    T->>A: POST /schedule
+    A->>D: Set Dates
+    A->>D: Notify Students
+    A-->>T: Scheduled
+
+================================================================================
+7.4 SEQUENCE DIAGRAM - USER ONBOARDING (A4)
+================================================================================
+
+sequenceDiagram
+    participant Ad as Admin
+    participant A as API
+    participant D as DB
+    participant E as Email
+    participant U as User
+
+    Ad->>A: POST /users
+    A->>D: Create User (inactive)
+    A->>D: Create Token
+    A->>E: Send Email
+    E-->>U: Activation Link
+    A-->>Ad: Created
+
+    U->>A: POST /activate
+    A->>D: Validate Token
+
+    alt Valid
+        A->>D: Activate User
+        A-->>U: Success
+    else Invalid
+        A-->>U: Error
+    end
+
+    U->>A: POST /login
+    A->>D: Check Credentials
+    A-->>U: JWT Tokens
+
+================================================================================
+END OF A4-OPTIMIZED DIAGRAMS
+================================================================================
