@@ -1,74 +1,155 @@
-# Sentraexam
+﻿# Sentraexam
 
-Full-stack academic management platform with a Django backend and React frontend.
+Sentraexam is a full-stack university management and examination platform.
 
-## Backend
+It provides role-based workflows for `Admin`, `HOD`, `Teacher`, and `Student` users, including course management, enrollments, assessments, scheduling, proctoring, notifications, documents, and academic calendar.
 
-Backend API for the Sentraexam academic management platform built with Django, Django REST Framework, and PostgreSQL.
+## Technology Stack
 
-### Features
+### Backend
+- Python 3.11+
+- Django 5.x
+- Django REST Framework
+- JWT auth (`djangorestframework-simplejwt`)
+- PostgreSQL (default in base settings)
+- Celery + Redis
+- Django Channels + channels-redis (WebSocket notifications)
+- drf-spectacular (OpenAPI/Swagger)
+- AI/proctoring libs: OpenCV, Ultralytics (YOLO), Pillow, NumPy, Google Generative AI SDK
+- File/media integrations: ImageKit (configured through env)
 
-- Role-based access for Administrators, Heads of Department, Teachers, and Students.
-- Department, course, timetable, assessment, assignment, and notification management.
-- JWT authentication with refresh token rotation and token blacklisting.
-- Celery-powered async jobs and Redis-based websockets/event support (hooks ready).
-- API schema generation with OpenAPI 3 via drf-spectacular.
+### Frontend
+- React 19 + TypeScript
+- Vite
+- Ant Design
+- React Router
+- TanStack Query
+- Axios
+- Recharts
+- Day.js
 
-## Frontend
+### DevOps / Tooling
+- Docker + Docker Compose
+- Makefile commands for common backend tasks
+- Pytest
+- Black, isort, Flake8, MyPy
 
-Frontend application built with React, Vite, and TypeScript.
+## Core Modules
 
-## Getting Started (Development)
+- `apps/users`: custom user model, role system, auth tokens, dashboard APIs
+- `apps/departments`: departments and memberships
+- `apps/courses`: courses and enrollment workflow
+- `apps/assessments`: assessments, scheduling approval flow, sessions, submissions, grading
+- `apps/proctoring`: snapshots, violations, face reference, settings, clips, session recordings
+- `apps/notifications`: announcements + per-user notifications + WebSocket consumer
+- `apps/documents`: categories, document storage, access logs
+- `apps/academic_calendar`: year, term, events, timetable
+- `frontend/`: SPA for all role dashboards and workflows
 
-1.  Copy the example environment file:
-    ```bash
-    cp .env.example .env
-    ```
-2.  Build and start the development containers:
-    ```bash
-    docker-compose -f docker-compose.dev.yml up --build
-    ```
-3.  Once the containers are running, your applications will be available at:
+## How It Works (High-Level)
 
-    - **Frontend**: `http://localhost:5173`
-    - **Backend**: `http://localhost:8000`
+1. User authenticates with JWT (`/api/auth/token/`).
+2. Frontend renders role-specific routes and dashboards.
+3. Domain workflows are handled via REST endpoints:
+   - departments, courses, enrollments
+   - assessments (create → approve → schedule → start session → submit → grade)
+   - proctoring snapshots/violations
+   - notifications and announcements
+4. Background and real-time processing:
+   - Celery handles async jobs/reminders
+   - Channels delivers live notifications through `/ws/notifications/`
+5. Data is stored in PostgreSQL; media files are saved in `media/` (or external storage when configured).
 
-4.  To create an admin user, run the following command in a separate terminal:
-    ```bash
-    docker-compose -f docker-compose.dev.yml exec backend python manage.py createsuperuser
-    ```
+## API Surface
 
-API documentation is available at `http://localhost:8000/api/docs/`.
+Base URL: `/api/`
 
-## Production
+- `auth/` (accounts, token, dashboards)
+- `departments/`
+- `courses/`
+- `assessments/` (including sessions/submissions)
+- `proctoring/`
+- `notifications/`
+- `documents/`
+- `calendar/`
 
-1.  Build and start the production containers:
-    ```bash
-    docker-compose up --build
-    ```
-2.  Your applications will be available at:
-    - **Frontend**: `http://localhost`
-    - **Backend**: `http://localhost:8000`
+API docs:
+- Swagger: `/api/docs/`
+- OpenAPI schema: `/api/schema/`
+- Redoc: `/api/redoc/`
 
-## Running Tests
+## Setup Instructions
 
-bash
-pytest
+## 1) Local Backend Setup
 
-## Project Structure
+```bash
+python -m venv venv
+# PowerShell
+.\venv\Scripts\Activate.ps1
 
-- `apps/users`: Custom user model, authentication flows, role management.
-- `apps/departments`: Department, course allocation, timetable ownership.
-- `apps/courses`: Course catalog, enrollment relationships.
-- `apps/assessments`: Exams, assignments, grading workflows.
-- `apps/notifications`: Announcements, inbox, delivery tracking.
-- `apps/documents`: Secure academic document storage.
-- `apps/academic_calendar`: Institutional calendars and events.
-- `frontend`: React frontend application.
-
-## Tooling
-
-- Formatting with Black and isort.
-- Type checking with mypy.
-- Pre-commit hooks ready via `.pre-commit-config.yaml` (add as needed).
+pip install -r requirements/dev.txt
+cp .env.example .env
+python manage.py migrate
+python manage.py createsuperuser
+python manage.py runserver
 ```
+
+## 2) Local Frontend Setup
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend default: `http://localhost:5173`
+Backend default: `http://localhost:8000`
+
+## 3) Docker Setup (Recommended for full stack)
+
+```bash
+docker-compose -f docker-compose.dev.yml up --build
+```
+
+Then run migrations/superuser in container if needed.
+
+## Environment Configuration
+
+Main env file: `.env`
+
+Common keys:
+- `DJANGO_SETTINGS_MODULE`
+- `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`
+- `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`
+- `REDIS_URL`, `CHANNELS_ENABLED`
+- `IMAGEKIT_PUBLIC_KEY`, `IMAGEKIT_PRIVATE_KEY`, `IMAGEKIT_URL_ENDPOINT`
+- `GEMINI_API_KEY`
+
+Do not commit secrets. Keep `.env` private.
+
+## Test / Lint / Format
+
+```bash
+make test
+make lint
+make format
+```
+
+## Project Commands
+
+```bash
+make run
+make migrate
+make makemigrations
+make createsuperuser
+```
+
+## Diagram Files
+
+- `class-diagram.md`
+- `er-diagram.md`
+- `architecture-diagram.md`
+- `sequence-diagram.md`
+- `use-case-diagram.md`
+
+These diagrams describe the current backend/frontend architecture and major business flows.
