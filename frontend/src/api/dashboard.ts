@@ -252,6 +252,8 @@ export const useHodDashboard = () => {
     return useQuery({
         queryKey: ['dashboard', 'hod'],
         queryFn: getHodDashboard,
+        refetchInterval: 15000,
+        refetchIntervalInBackground: true,
     });
 };
 

@@ -1,4 +1,4 @@
-﻿# Sentraexam
+# Sentraexam
 
 Sentraexam is a full-stack university management and examination platform.
 
@@ -52,7 +52,7 @@ It provides role-based workflows for `Admin`, `HOD`, `Teacher`, and `Student` us
 2. Frontend renders role-specific routes and dashboards.
 3. Domain workflows are handled via REST endpoints:
    - departments, courses, enrollments
-   - assessments (create → approve → schedule → start session → submit → grade)
+   - assessments (create ? approve ? schedule ? start session ? submit ? grade)
    - proctoring snapshots/violations
    - notifications and announcements
 4. Background and real-time processing:
@@ -77,6 +77,38 @@ API docs:
 - Swagger: `/api/docs/`
 - OpenAPI schema: `/api/schema/`
 - Redoc: `/api/redoc/`
+
+## 4.3.2 System Architecture Structure
+
+The system follows a layered architecture:
+
+Client Layer (React)
+    -> API Layer (Django REST)
+    -> Business Logic
+    -> Database Layer
+    -> AI Monitoring Module
+
+## 4.3.3 Project Directory Structure
+
+```text
+SentraExam/
+|
+|-- frontend/
+|   |-- components/
+|   |-- pages/
+|   `-- services/
+|
+|-- backend/
+|   |-- models/
+|   |-- views/
+|   |-- serializers/
+|   |-- urls/
+|   `-- ai_module/
+|
+`-- database/
+```
+
+This structure improves maintainability and scalability.
 
 ## Setup Instructions
 
@@ -153,3 +185,6 @@ make createsuperuser
 - `use-case-diagram.md`
 
 These diagrams describe the current backend/frontend architecture and major business flows.
+
+
+

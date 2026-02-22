@@ -9,6 +9,19 @@ import { useAuth } from '../../../contexts/AuthContext';
 
 const { Title, Text } = Typography;
 
+const getEnrollmentErrorMessage = (error: any): string => {
+  const data = error?.response?.data;
+  if (!data) return 'Failed to enroll';
+  if (typeof data.detail === 'string') return data.detail;
+  if (Array.isArray(data.course) && data.course[0]) return data.course[0];
+  if (Array.isArray(data.non_field_errors) && data.non_field_errors[0]) return data.non_field_errors[0];
+  const firstString = Object.values(data).find((value) => Array.isArray(value) && value[0]) as
+    | string[]
+    | undefined;
+  if (firstString?.[0]) return firstString[0];
+  return 'Failed to enroll';
+};
+
 const CourseDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -20,7 +33,7 @@ const CourseDetailPage: React.FC = () => {
 
   const { data: course, isLoading, error } = useCourse(courseId!);
 
-  const { data: enrollments, isLoading: enrollmentsLoading } = useCourseEnrollments({
+  const { data: enrollments, isLoading: enrollmentsLoading, refetch: refetchEnrollments } = useCourseEnrollments({
     course: courseId,
   });
 
@@ -58,9 +71,10 @@ const CourseDetailPage: React.FC = () => {
     if (!courseId) return;
     try {
       await enrollInCourseMutation.mutateAsync(courseId);
+      await refetchEnrollments();
       message.success('Enrollment request submitted for approval.');
     } catch (error: any) {
-      message.error(error.response?.data?.course?.[0] || error.response?.data?.detail || 'Failed to enroll');
+      message.error(getEnrollmentErrorMessage(error));
     }
   };
 
@@ -132,6 +146,7 @@ const CourseDetailPage: React.FC = () => {
               icon={<CheckOutlined />}
               onClick={handleEnrollInCourse}
               loading={enrollInCourseMutation.isPending}
+              disabled={!user?.department}
             >
               Enroll Now
             </Button>

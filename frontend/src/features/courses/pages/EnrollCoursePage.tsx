@@ -10,6 +10,19 @@ import type { ColumnType } from 'antd/es/table';
 
 const { Title } = Typography;
 
+const getEnrollmentErrorMessage = (error: any): string => {
+    const data = error?.response?.data;
+    if (!data) return 'Failed to enroll';
+    if (typeof data.detail === 'string') return data.detail;
+    if (Array.isArray(data.course) && data.course[0]) return data.course[0];
+    if (Array.isArray(data.non_field_errors) && data.non_field_errors[0]) return data.non_field_errors[0];
+    const firstString = Object.values(data).find((value) => Array.isArray(value) && value[0]) as
+        | string[]
+        | undefined;
+    if (firstString?.[0]) return firstString[0];
+    return 'Failed to enroll';
+};
+
 const EnrollCoursePage: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
@@ -24,7 +37,7 @@ const EnrollCoursePage: React.FC = () => {
     });
 
     // Get student's current enrollments
-    const { data: enrollmentsData } = useCourseEnrollments({});
+    const { data: enrollmentsData, refetch: refetchEnrollments } = useCourseEnrollments({});
 
     const enrollMutation = useEnrollInCourse();
 
@@ -45,9 +58,10 @@ const EnrollCoursePage: React.FC = () => {
     const handleEnroll = async (courseId: string) => {
         try {
             await enrollMutation.mutateAsync(courseId);
+            await refetchEnrollments();
             message.success('Enrollment request submitted for approval.');
         } catch (error: any) {
-            message.error(error.response?.data?.course?.[0] || error.response?.data?.detail || 'Failed to enroll');
+            message.error(getEnrollmentErrorMessage(error));
         }
     };
 
@@ -108,6 +122,7 @@ const EnrollCoursePage: React.FC = () => {
                     icon={<CheckOutlined />}
                     onClick={() => handleEnroll(record.id)}
                     loading={enrollMutation.isPending}
+                    disabled={!user?.department}
                     size="small"
                 >
                     Enroll
@@ -137,6 +152,15 @@ const EnrollCoursePage: React.FC = () => {
                 showIcon
                 style={{ marginBottom: 16 }}
             />
+            {!user?.department && (
+                <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="No department assigned"
+                    description="Your account is not assigned to a department, so enrollment requests will fail. Contact your administrator."
+                />
+            )}
 
             <Space style={{ marginBottom: 16, width: '100%' }} size="middle" wrap>
                 <Input
@@ -163,7 +187,9 @@ const EnrollCoursePage: React.FC = () => {
                     showTotal: (total) => `${total} available courses`,
                 }}
                 locale={{
-                    emptyText: 'No courses available for enrollment. You may already be enrolled in all courses from your department.',
+                    emptyText: user?.department
+                        ? 'No courses available for enrollment. You may already be enrolled in all courses from your department.'
+                        : 'Assign a department to your student account to enroll in courses.',
                 }}
             />
         </div>
