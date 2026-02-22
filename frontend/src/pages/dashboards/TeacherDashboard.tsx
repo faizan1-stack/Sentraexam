@@ -219,12 +219,13 @@ const MetricCard: React.FC<{
     className="sentra-hover-lift"
     bodyStyle={{ padding: 18 }}
     style={{
-      border: 'none',
+      border: '1px solid #e2e8f0',
       cursor: onClick ? 'pointer' : 'default',
       background: gradient,
       overflow: 'hidden',
       position: 'relative',
       height: '100%',
+      boxShadow: 'none',
     }}
     onClick={onClick}
     role={onClick ? 'button' : undefined}
@@ -237,18 +238,9 @@ const MetricCard: React.FC<{
         : undefined
     }
   >
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        backgroundImage:
-          'radial-gradient(circle at 18% 20%, rgba(255,255,255,0.28), transparent 46%), radial-gradient(circle at 88% 26%, rgba(255,255,255,0.16), transparent 52%)',
-        pointerEvents: 'none',
-      }}
-    />
     <div style={{ position: 'relative', zIndex: 1 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-        <Text style={{ color: 'rgba(255,255,255,0.92)', fontWeight: 600 }}>{title}</Text>
+        <Text style={{ color: '#334155', fontWeight: 600 }}>{title}</Text>
         <div
           style={{
             width: 40,
@@ -256,8 +248,9 @@ const MetricCard: React.FC<{
             borderRadius: 14,
             display: 'grid',
             placeItems: 'center',
-            background: 'rgba(255,255,255,0.22)',
-            color: '#fff',
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            color: '#475569',
             flex: '0 0 auto',
           }}
           aria-hidden
@@ -267,18 +260,18 @@ const MetricCard: React.FC<{
       </div>
       <div style={{ marginTop: 10, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
         {loading ? (
-          <Skeleton.Input active size="small" style={{ width: 120, background: 'rgba(255,255,255,0.2)' }} />
+          <Skeleton.Input active size="small" style={{ width: 120, background: '#e2e8f0' }} />
         ) : (
-          <div style={{ fontSize: 30, fontWeight: 800, color: '#fff', letterSpacing: -0.4 }}>{value}</div>
+          <div style={{ fontSize: 30, fontWeight: 800, color: '#0f172a', letterSpacing: -0.4 }}>{value}</div>
         )}
         {onClick ? (
           <Tag
             color="default"
             style={{
               borderRadius: 999,
-              background: 'rgba(255,255,255,0.2)',
-              borderColor: 'rgba(255,255,255,0.28)',
-              color: 'rgba(255,255,255,0.92)',
+              background: '#eef2f7',
+              borderColor: '#d4dbe5',
+              color: '#334155',
               marginInlineEnd: 0,
             }}
           >
@@ -286,7 +279,7 @@ const MetricCard: React.FC<{
           </Tag>
         ) : null}
       </div>
-      {meta ? <Text style={{ display: 'block', marginTop: 10, color: 'rgba(255,255,255,0.86)' }}>{meta}</Text> : null}
+      {meta ? <Text style={{ display: 'block', marginTop: 10, color: '#475569' }}>{meta}</Text> : null}
     </div>
   </Card>
 );
@@ -608,12 +601,12 @@ const TeacherDashboard: React.FC = () => {
   }, [assessmentsAll, gradingQueuePage?.results, pendingEnrollmentsList]);
 
   const statGradients = {
-    courses: 'linear-gradient(135deg, #2196f3 0%, #1e88e5 55%, #90caf9 120%)',
-    students: 'linear-gradient(135deg, #10b981 0%, #22c55e 60%, #86efac 120%)',
-    assessments: 'linear-gradient(135deg, #9c27b0 0%, #7b1fa2 55%, #ce93d8 120%)',
-    approvals: 'linear-gradient(135deg, #ff9800 0%, #f57c00 55%, #ffd180 120%)',
-    grading: 'linear-gradient(135deg, #ef4444 0%, #dc2626 60%, #fca5a5 120%)',
-    performance: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 60%, #67e8f9 120%)',
+    courses: 'linear-gradient(135deg, #f5f9ff 0%, #edf4ff 100%)',
+    students: 'linear-gradient(135deg, #f4fbf7 0%, #ebf7f0 100%)',
+    assessments: 'linear-gradient(135deg, #f8f6ff 0%, #f1ecff 100%)',
+    approvals: 'linear-gradient(135deg, #fff8f1 0%, #ffefe1 100%)',
+    grading: 'linear-gradient(135deg, #fff5f5 0%, #ffebeb 100%)',
+    performance: 'linear-gradient(135deg, #f2fbfb 0%, #e8f7f8 100%)',
   };
 
   const handleApprove = async (enrollmentId: string) => {

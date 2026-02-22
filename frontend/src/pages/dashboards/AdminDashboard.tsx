@@ -149,14 +149,14 @@ const departmentEmoji = (name?: string, code?: string) => {
 const trendMeta = (trend?: AdminTrend) => {
   const delta = trend?.delta ?? 0;
   const period = trend?.period_label ?? '';
-  if (!trend) return { icon: null, text: '--', color: 'rgba(255,255,255,0.86)' };
+  if (!trend) return { icon: null, text: '--', color: '#475569' };
   if (trend.direction === 'up') {
     return { icon: <ArrowUpOutlined />, text: `+${delta} ${period}`, color: '#16a34a' };
   }
   if (trend.direction === 'down') {
     return { icon: <ArrowDownOutlined />, text: `${delta} ${period}`, color: '#ef4444' };
   }
-  return { icon: <ClockCircleOutlined />, text: `0 ${period}`, color: 'rgba(255,255,255,0.72)' };
+  return { icon: <ClockCircleOutlined />, text: `0 ${period}`, color: '#64748b' };
 };
 
 type NotificationTone = 'success' | 'info' | 'warning' | 'error';
@@ -246,11 +246,12 @@ const StatCard: React.FC<{
       className="sentra-hover-lift"
       bodyStyle={{ padding: 18 }}
       style={{
-        border: 'none',
+        border: '1px solid #e2e8f0',
         cursor: onClick ? 'pointer' : 'default',
         background: gradient,
         overflow: 'hidden',
         position: 'relative',
+        boxShadow: 'none',
       }}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
@@ -264,30 +265,21 @@ const StatCard: React.FC<{
       }
       aria-label={onClick ? `${title} card` : undefined}
     >
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          backgroundImage:
-            'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.18), transparent 44%), radial-gradient(circle at 85% 10%, rgba(255,255,255,0.12), transparent 42%)',
-          pointerEvents: 'none',
-        }}
-      />
       <div style={{ position: 'relative', zIndex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div>
-            <Text style={{ color: 'rgba(255,255,255,0.86)', fontWeight: 600 }}>{title}</Text>
+            <Text style={{ color: '#334155', fontWeight: 600 }}>{title}</Text>
             <div style={{ marginTop: 8 }}>
               {loading ? (
                 <Skeleton active paragraph={false} title={{ width: 110 }} />
               ) : (
-                <div style={{ fontSize: 28, fontWeight: 800, color: '#ffffff', lineHeight: 1.15 }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: '#0f172a', lineHeight: 1.15 }}>
                   {value.toLocaleString()}
                 </div>
               )}
             </div>
             <div style={{ marginTop: 6 }}>
-              <Text style={{ color: 'rgba(255,255,255,0.74)' }}>{label}</Text>
+              <Text style={{ color: '#64748b' }}>{label}</Text>
             </div>
           </div>
           <div
@@ -295,11 +287,12 @@ const StatCard: React.FC<{
               width: 44,
               height: 44,
               borderRadius: 14,
-              background: 'rgba(255,255,255,0.16)',
+              background: '#ffffff',
+              border: '1px solid #e2e8f0',
               display: 'grid',
               placeItems: 'center',
               color: accent,
-              boxShadow: '0 10px 18px rgba(0,0,0,0.16)',
+              boxShadow: 'none',
               flex: '0 0 auto',
             }}
             aria-hidden
@@ -1024,7 +1017,7 @@ const AdminDashboard: React.FC = () => {
             value={data?.user_counts?.total || 0}
             icon={<TeamOutlined style={{ fontSize: 20 }} />}
             accent="#93c5fd"
-            gradient="linear-gradient(135deg, rgba(33,150,243,0.55) 0%, rgba(102,126,234,0.9) 100%)"
+            gradient="linear-gradient(135deg, #f5f9ff 0%, #edf4ff 100%)"
             trend={trends.users}
             onClick={() => navigate('/dashboard/users')}
             loading={isLoading}
@@ -1037,7 +1030,7 @@ const AdminDashboard: React.FC = () => {
             value={totals.courses || 0}
             icon={<BookOutlined style={{ fontSize: 20 }} />}
             accent="#86efac"
-            gradient="linear-gradient(135deg, rgba(34,197,94,0.55) 0%, rgba(20,184,166,0.9) 100%)"
+            gradient="linear-gradient(135deg, #f4fbf7 0%, #ebf7f0 100%)"
             trend={trends.courses}
             onClick={() => navigate('/dashboard/courses')}
             loading={isLoading}
@@ -1050,7 +1043,7 @@ const AdminDashboard: React.FC = () => {
             value={totals.assessments || 0}
             icon={<FileTextOutlined style={{ fontSize: 20 }} />}
             accent="#e9d5ff"
-            gradient="linear-gradient(135deg, rgba(118,75,162,0.75) 0%, rgba(102,126,234,0.9) 100%)"
+            gradient="linear-gradient(135deg, #f8f6ff 0%, #f1ecff 100%)"
             trend={trends.assessments}
             onClick={() => navigate('/dashboard/assessments')}
             loading={isLoading}
@@ -1063,7 +1056,7 @@ const AdminDashboard: React.FC = () => {
             value={data?.user_counts?.students || 0}
             icon={<UserOutlined style={{ fontSize: 20 }} />}
             accent="#fed7aa"
-            gradient="linear-gradient(135deg, rgba(245,158,11,0.6) 0%, rgba(251,113,133,0.75) 100%)"
+            gradient="linear-gradient(135deg, #fff8f1 0%, #ffefe1 100%)"
             trend={trends.students}
             onClick={() => navigate('/dashboard/users?role=STUDENT')}
             loading={isLoading}
@@ -1076,7 +1069,7 @@ const AdminDashboard: React.FC = () => {
             value={totals.enrollments || 0}
             icon={<TeamOutlined style={{ fontSize: 20 }} />}
             accent="#a5f3fc"
-            gradient="linear-gradient(135deg, rgba(6,182,212,0.65) 0%, rgba(14,165,233,0.9) 100%)"
+            gradient="linear-gradient(135deg, #f2fbfb 0%, #e8f7f8 100%)"
             trend={trends.enrollments}
             onClick={() => navigate('/dashboard/enrollments')}
             loading={isLoading}
@@ -1089,7 +1082,7 @@ const AdminDashboard: React.FC = () => {
             value={totals.departments || 0}
             icon={<PieChartOutlined style={{ fontSize: 20 }} />}
             accent="#ddd6fe"
-            gradient="linear-gradient(135deg, rgba(139,92,246,0.65) 0%, rgba(118,75,162,0.9) 100%)"
+            gradient="linear-gradient(135deg, #f7f5ff 0%, #efebff 100%)"
             trend={undefined}
             onClick={() => navigate('/dashboard/departments')}
             loading={isLoading}

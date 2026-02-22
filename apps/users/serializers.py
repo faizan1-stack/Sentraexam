@@ -27,7 +27,7 @@ class UserSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "external_id", "is_active", "created_at", "updated_at", "department")
+        read_only_fields = ("id", "external_id", "is_active", "created_at", "updated_at")
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
