@@ -34,6 +34,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
     course_code = serializers.CharField(source="course.code", read_only=True)
     created_by_email = serializers.EmailField(source="created_by.email", read_only=True)
     approved_by_email = serializers.EmailField(source="approved_by.email", read_only=True)
+    rejected_by_email = serializers.EmailField(source="rejected_by.email", read_only=True)
     schedule_proposed_by_email = serializers.EmailField(
         source="schedule_proposed_by.email", read_only=True
     )
@@ -84,6 +85,10 @@ class AssessmentSerializer(serializers.ModelSerializer):
             "approved_by",
             "approved_by_email",
             "approved_at",
+            "rejected_by",
+            "rejected_by_email",
+            "rejected_at",
+            "rejection_reason",
             "created_at",
             "updated_at",
             "total_submissions",
@@ -97,6 +102,10 @@ class AssessmentSerializer(serializers.ModelSerializer):
             "approved_by",
             "approved_by_email",
             "approved_at",
+            "rejected_by",
+            "rejected_by_email",
+            "rejected_at",
+            "rejection_reason",
             "schedule_proposed_by",
             "schedule_proposed_by_email",
             "schedule_proposed_at",
@@ -329,6 +338,15 @@ class AssessmentCreateSerializer(serializers.ModelSerializer):
 
 class AssessmentApprovalSerializer(serializers.Serializer):
     approve = serializers.BooleanField()
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+    def validate(self, attrs):
+        approve = bool(attrs.get("approve"))
+        reason = (attrs.get("reason") or "").strip()
+        if not approve and len(reason) < 5:
+            raise serializers.ValidationError({"reason": "Rejection reason is required."})
+        attrs["reason"] = reason
+        return attrs
 
     def save(self, assessment: Assessment):
         user = self.context["request"].user
@@ -494,13 +512,14 @@ class AssessmentScheduleSerializer(serializers.Serializer):
         assessment.grace_minutes = int(computed["grace_minutes"])
         assessment.closes_at = computed["closes_at"]
 
-        # Proposal workflow: proposing a schedule requires admin approval to become SCHEDULED.
-        assessment.schedule_state = Assessment.ScheduleState.PROPOSED
+        # Scheduling by HOD/Admin is auto-approved.
+        now = timezone.now()
+        assessment.schedule_state = Assessment.ScheduleState.APPROVED
         assessment.schedule_proposed_by = request.user
-        assessment.schedule_proposed_at = timezone.now()
-        assessment.schedule_approved_by = None
-        assessment.schedule_approved_at = None
-        assessment.status = Assessment.Status.APPROVED
+        assessment.schedule_proposed_at = now
+        assessment.schedule_approved_by = request.user
+        assessment.schedule_approved_at = now
+        assessment.status = Assessment.Status.SCHEDULED
 
         assessment.save(
             update_fields=[

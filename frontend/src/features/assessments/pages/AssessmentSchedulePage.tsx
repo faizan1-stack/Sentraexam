@@ -60,7 +60,7 @@ const AssessmentSchedulePage: React.FC = () => {
     setEditing(assessment.schedule_state !== 'APPROVED');
   }, [assessment, form]);
 
-  const canSchedule = user?.role === UserRole.ADMIN || user?.role === UserRole.HOD || user?.role === UserRole.TEACHER;
+  const canSchedule = user?.role === UserRole.ADMIN || user?.role === UserRole.HOD;
 
   const extractScheduleError = (data: any): string | null => {
     if (!data) return null;
@@ -96,7 +96,7 @@ const AssessmentSchedulePage: React.FC = () => {
         lateEntryMinutes: values.late_entry_minutes,
         instructionsOpenMinutes: values.instructions_open_minutes,
       });
-      message.success('Schedule proposed successfully (pending admin approval)');
+      message.success('Schedule saved and approved successfully');
       navigate(`/dashboard/assessments/${assessmentId}`);
     } catch (e: any) {
       const data = e?.response?.data;
@@ -211,10 +211,10 @@ const AssessmentSchedulePage: React.FC = () => {
     assessment.status === AssessmentStatus.IN_PROGRESS || assessment.status === AssessmentStatus.COMPLETED;
   const eligibleForScheduling =
     assessment.status === AssessmentStatus.APPROVED || assessment.status === AssessmentStatus.SCHEDULED;
-  const canPropose =
+  const canManageSchedule =
     eligibleForScheduling &&
     !schedulingLocked &&
-    (user?.role === UserRole.HOD || user?.role === UserRole.TEACHER);
+    (user?.role === UserRole.HOD || user?.role === UserRole.ADMIN);
   const canApproveSchedule = user?.role === UserRole.ADMIN && assessment.schedule_state === 'PROPOSED';
   const canRejectSchedule =
     (user?.role === UserRole.ADMIN || user?.role === UserRole.HOD) && assessment.schedule_state === 'PROPOSED';
@@ -248,15 +248,15 @@ const AssessmentSchedulePage: React.FC = () => {
               type="info"
               showIcon
               message="Schedule is approved and locked"
-              description="To change it, propose a new schedule. Changes require admin re-approval."
+              description="To change it, click Edit Schedule and save. New schedule is approved immediately."
             />
           )}
           {assessment.schedule_state === 'PROPOSED' && (
             <Alert
               type="warning"
               showIcon
-              message="Schedule proposed"
-              description="Admin approval is required before students can access the exam window."
+              message="Pending schedule found"
+              description="This appears to be an older pending schedule. Save again to auto-approve."
             />
           )}
           {schedulingLocked && (
@@ -280,7 +280,7 @@ const AssessmentSchedulePage: React.FC = () => {
             type="success"
             showIcon
             message="Centralized exam scheduling"
-            description="Use the date picker and duration - no free-text times. The system calculates end/close times and validates access using server time."
+            description="Use the date picker and duration. When HOD/Admin saves schedule, it is approved automatically."
           />
 
           <Form form={form} layout="vertical" onFinish={handleSubmit}>
@@ -402,12 +402,12 @@ const AssessmentSchedulePage: React.FC = () => {
 
             <Form.Item>
               <Space>
-                {(user?.role === UserRole.ADMIN || canPropose) && assessment.schedule_state === 'APPROVED' && !editing && (
+                {canManageSchedule && assessment.schedule_state === 'APPROVED' && !editing && (
                   <Button type="primary" icon={<CalendarOutlined />} disabled={schedulingLocked} onClick={() => setEditing(true)}>
-                    Propose Change
+                    Edit Schedule
                   </Button>
                 )}
-                {(user?.role === UserRole.ADMIN || canPropose) && !(assessment.schedule_state === 'APPROVED' && !editing) && (
+                {canManageSchedule && !(assessment.schedule_state === 'APPROVED' && !editing) && (
                   <Button
                     type="primary"
                     icon={<CalendarOutlined />}
@@ -415,7 +415,7 @@ const AssessmentSchedulePage: React.FC = () => {
                     loading={scheduleMutation.isPending}
                     disabled={schedulingLocked || !eligibleForScheduling || !editing}
                   >
-                    {assessment.schedule_state === 'APPROVED' ? 'Submit Change Proposal' : 'Propose Schedule'}
+                    Save Schedule
                   </Button>
                 )}
                 {canApproveSchedule && (

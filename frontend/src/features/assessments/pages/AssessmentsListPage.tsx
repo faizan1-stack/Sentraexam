@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Table, Button, Space, Tag, Input, Select, message, Typography, Alert, Popconfirm } from 'antd';
+import { Table, Button, Space, Tag, Input, Select, message, Typography, Alert, Popconfirm, Modal } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, CheckOutlined, CalendarOutlined, PlayCircleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -27,6 +27,8 @@ const AssessmentsListPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
   const [page, setPage] = useState(1);
+  const [rejectTarget, setRejectTarget] = useState<Assessment | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   const { data, isLoading, error, refetch } = useAssessments({
     search,
@@ -65,12 +67,39 @@ const AssessmentsListPage: React.FC = () => {
 
   const handleApprove = async (assessmentId: string) => {
     try {
-      await approveMutation.mutateAsync(assessmentId);
+      await approveMutation.mutateAsync({ id: assessmentId, approved: true });
       message.success('Assessment approved successfully');
       refetch();
     } catch (error: any) {
       message.error(error.response?.data?.detail || 'Failed to approve assessment');
     }
+  };
+
+  const handleReject = async (assessmentId: string, reason: string) => {
+    try {
+      await approveMutation.mutateAsync({ id: assessmentId, approved: false, reason });
+      message.success('Assessment rejected and teacher notified');
+      refetch();
+    } catch (error: any) {
+      message.error(error.response?.data?.reason?.[0] || error.response?.data?.detail || 'Failed to reject assessment');
+    }
+  };
+
+  const openRejectModal = (record: Assessment) => {
+    setRejectTarget(record);
+    setRejectReason('');
+  };
+
+  const confirmReject = async () => {
+    if (!rejectTarget) return;
+    const reason = rejectReason.trim();
+    if (reason.length < 5) {
+      message.error('Please provide a rejection reason (minimum 5 characters).');
+      return;
+    }
+    await handleReject(rejectTarget.id, reason);
+    setRejectTarget(null);
+    setRejectReason('');
   };
 
   const handleSubmitForApproval = async (assessmentId: string) => {
@@ -189,6 +218,9 @@ const AssessmentsListPage: React.FC = () => {
         { text: 'Submitted', value: 'SUBMITTED' },
         { text: 'In Progress', value: 'IN_PROGRESS' },
         { text: 'Not Started', value: 'NOT_STARTED' },
+      ] : user?.role === UserRole.TEACHER ? [
+        { text: 'Draft', value: AssessmentStatus.DRAFT },
+        { text: 'Submitted', value: AssessmentStatus.SUBMITTED },
       ] : [
         { text: 'Draft', value: AssessmentStatus.DRAFT },
         { text: 'Submitted', value: AssessmentStatus.SUBMITTED },
@@ -253,14 +285,24 @@ const AssessmentsListPage: React.FC = () => {
             </Button>
           )}
           {record.status === AssessmentStatus.SUBMITTED && (user?.role === UserRole.ADMIN || user?.role === UserRole.HOD) && (
-            <Button
-              type="link"
-              icon={<CheckOutlined />}
-              onClick={() => handleApprove(record.id)}
-              loading={approveMutation.isPending}
-            >
-              Approve
-            </Button>
+            <>
+              <Button
+                type="link"
+                icon={<CheckOutlined />}
+                onClick={() => handleApprove(record.id)}
+                loading={approveMutation.isPending}
+              >
+                Approve
+              </Button>
+              <Button
+                type="link"
+                danger
+                onClick={() => openRejectModal(record)}
+                loading={approveMutation.isPending}
+              >
+                Reject
+              </Button>
+            </>
           )}
           {(record.status === AssessmentStatus.APPROVED || record.status === AssessmentStatus.SCHEDULED) &&
             (user?.role === UserRole.ADMIN || user?.role === UserRole.HOD) && (
@@ -355,11 +397,21 @@ const AssessmentsListPage: React.FC = () => {
         >
           <Select.Option value={AssessmentStatus.DRAFT}>Draft</Select.Option>
           <Select.Option value={AssessmentStatus.SUBMITTED}>Submitted</Select.Option>
-          <Select.Option value={AssessmentStatus.APPROVED}>Approved</Select.Option>
-          <Select.Option value={AssessmentStatus.SCHEDULED}>Scheduled</Select.Option>
-          <Select.Option value={AssessmentStatus.IN_PROGRESS}>In Progress</Select.Option>
-          <Select.Option value={AssessmentStatus.COMPLETED}>Completed</Select.Option>
-          <Select.Option value={AssessmentStatus.CANCELLED}>Cancelled</Select.Option>
+          {user?.role !== UserRole.TEACHER && (
+            <Select.Option value={AssessmentStatus.APPROVED}>Approved</Select.Option>
+          )}
+          {user?.role !== UserRole.TEACHER && (
+            <Select.Option value={AssessmentStatus.SCHEDULED}>Scheduled</Select.Option>
+          )}
+          {user?.role !== UserRole.TEACHER && (
+            <Select.Option value={AssessmentStatus.IN_PROGRESS}>In Progress</Select.Option>
+          )}
+          {user?.role !== UserRole.TEACHER && (
+            <Select.Option value={AssessmentStatus.COMPLETED}>Completed</Select.Option>
+          )}
+          {user?.role !== UserRole.TEACHER && (
+            <Select.Option value={AssessmentStatus.CANCELLED}>Cancelled</Select.Option>
+          )}
         </Select>
         <Select
           placeholder="Filter by type"
@@ -389,6 +441,32 @@ const AssessmentsListPage: React.FC = () => {
           showTotal: (total) => `Total ${total} assessments`,
         }}
       />
+
+      <Modal
+        title="Reject Assessment"
+        open={!!rejectTarget}
+        onCancel={() => {
+          setRejectTarget(null);
+          setRejectReason('');
+        }}
+        onOk={confirmReject}
+        okText="Reject"
+        okType="danger"
+        okButtonProps={{ disabled: rejectReason.trim().length < 5, loading: approveMutation.isPending }}
+        centered
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ color: 'var(--muted-ink)' }}>
+            Please provide a reason. It will be sent to the teacher.
+          </div>
+          <Input.TextArea
+            value={rejectReason}
+            autoSize={{ minRows: 3, maxRows: 6 }}
+            placeholder="Reason for rejection (required)"
+            onChange={(e) => setRejectReason(e.target.value)}
+          />
+        </div>
+      </Modal>
     </div>
   );
 };

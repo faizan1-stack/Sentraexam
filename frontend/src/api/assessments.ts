@@ -119,18 +119,32 @@ export const useSubmitAssessmentForApproval = () => {
 };
 
 // Approve assessment
-export const approveAssessment = async (id: string): Promise<Assessment> => {
-  const { data } = await apiClient.post<Assessment>(`/assessments/${id}/approve/`, { approve: true });
+export const approveAssessment = async (
+  id: string,
+  approved = true,
+  reason?: string
+): Promise<Assessment> => {
+  const body: Record<string, any> = { approve: approved };
+  if (typeof reason === 'string') body.reason = reason;
+  const { data } = await apiClient.post<Assessment>(`/assessments/${id}/approve/`, body);
   return data;
 };
 
 export const useApproveAssessment = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: approveAssessment,
-    onSuccess: (_, id) => {
+    mutationFn: ({
+      id,
+      approved,
+      reason,
+    }: {
+      id: string;
+      approved?: boolean;
+      reason?: string;
+    }) => approveAssessment(id, approved ?? true, reason),
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['assessments'] });
-      queryClient.invalidateQueries({ queryKey: ['assessment', id] });
+      queryClient.invalidateQueries({ queryKey: ['assessment', variables.id] });
     },
   });
 };

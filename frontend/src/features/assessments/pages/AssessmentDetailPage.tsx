@@ -244,6 +244,19 @@ const AssessmentDetailPage: React.FC = () => {
               </Descriptions.Item>
             </>
           )}
+          {assessment.rejection_reason && (
+            <>
+              <Descriptions.Item label="Rejected By">
+                {assessment.rejected_by_email || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Rejected At">
+                {assessment.rejected_at ? new Date(assessment.rejected_at).toLocaleString() : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Rejection Reason" span={2}>
+                {assessment.rejection_reason}
+              </Descriptions.Item>
+            </>
+          )}
         </Descriptions>
       </Card>
 

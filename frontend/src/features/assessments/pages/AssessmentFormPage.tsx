@@ -20,8 +20,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { MinusCircleOutlined, PlusOutlined, SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { useAssessment, useCreateAssessment, useUpdateAssessment } from '../../../api/assessments';
 import { useCourses } from '../../../api/courses';
+import { useAuth } from '../../../contexts/AuthContext';
 import type { CreateAssessmentPayload, AssessmentStatus } from '../../../types/index';
-import { AssessmentSubmissionFormat, AssessmentType } from '../../../types/index';
+import { AssessmentSubmissionFormat, AssessmentType, UserRole } from '../../../types/index';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -33,6 +34,7 @@ const AssessmentFormPage: React.FC = () => {
   const isEdit = Boolean(id);
   const assessmentId = id || undefined;
   const { token } = theme.useToken();
+  const { user } = useAuth();
 
   const [form] = Form.useForm();
   const assessmentType = Form.useWatch('assessment_type', form);
@@ -44,6 +46,21 @@ const AssessmentFormPage: React.FC = () => {
 
   const createMutation = useCreateAssessment();
   const updateMutation = useUpdateAssessment();
+  const statusOptions =
+    user?.role === UserRole.TEACHER
+      ? [
+          { value: 'DRAFT', label: 'Draft' },
+          { value: 'SUBMITTED', label: 'Submitted' },
+        ]
+      : [
+          { value: 'DRAFT', label: 'Draft' },
+          { value: 'SUBMITTED', label: 'Submitted' },
+          { value: 'APPROVED', label: 'Approved' },
+          { value: 'SCHEDULED', label: 'Scheduled' },
+          { value: 'IN_PROGRESS', label: 'In Progress' },
+          { value: 'COMPLETED', label: 'Completed' },
+          { value: 'CANCELLED', label: 'Cancelled' },
+        ];
 
   React.useEffect(() => {
     if (assessment && isEdit) {
@@ -546,13 +563,11 @@ const AssessmentFormPage: React.FC = () => {
                 rules={[{ required: true, message: 'Please select status' }]}
               >
                 <Select placeholder="Select status">
-                  <Option value="DRAFT">Draft</Option>
-                  <Option value="SUBMITTED">Submitted</Option>
-                  <Option value="APPROVED">Approved</Option>
-                  <Option value="SCHEDULED">Scheduled</Option>
-                  <Option value="IN_PROGRESS">In Progress</Option>
-                  <Option value="COMPLETED">Completed</Option>
-                  <Option value="CANCELLED">Cancelled</Option>
+                  {statusOptions.map((option) => (
+                    <Option key={option.value} value={option.value}>
+                      {option.label}
+                    </Option>
+                  ))}
                 </Select>
               </Form.Item>
 
