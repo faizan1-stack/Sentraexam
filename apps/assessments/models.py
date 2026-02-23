@@ -96,6 +96,11 @@ class Assessment(BaseModel):
         User, on_delete=models.SET_NULL, related_name="assessments_approved", null=True, blank=True
     )
     approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="assessments_rejected", null=True, blank=True
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
     assign_to_all = models.BooleanField(
         default=True,
         help_text="If False, only students in ExamAssignment can take the exam."
@@ -106,13 +111,29 @@ class Assessment(BaseModel):
 
     def submit_for_approval(self):
         self.status = self.Status.SUBMITTED
-        self.save(update_fields=["status", "updated_at"])
+        self.rejected_by = None
+        self.rejected_at = None
+        self.rejection_reason = ""
+        self.save(update_fields=["status", "rejected_by", "rejected_at", "rejection_reason", "updated_at"])
 
     def approve(self, user):
         self.status = self.Status.APPROVED
         self.approved_by = user
         self.approved_at = timezone.now()
-        self.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+        self.rejected_by = None
+        self.rejected_at = None
+        self.rejection_reason = ""
+        self.save(
+            update_fields=[
+                "status",
+                "approved_by",
+                "approved_at",
+                "rejected_by",
+                "rejected_at",
+                "rejection_reason",
+                "updated_at",
+            ]
+        )
 
     def schedule(self, scheduled_at, closes_at):
         self.status = self.Status.SCHEDULED

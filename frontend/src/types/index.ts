@@ -237,6 +237,10 @@ export interface Assessment {
   approved_by: string | null;
   approved_by_email: string | null;
   approved_at: string | null;
+  rejected_by?: string | null;
+  rejected_by_email?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
   created_at: string;
   updated_at: string;
   // Statistics fields

@@ -95,7 +95,10 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         if user.role == User.Role.HOD and user.department_id:
             return qs.filter(course__department_id=user.department_id).distinct()
         if user.role == User.Role.TEACHER:
-            return qs.filter(course__assigned_teacher=user).distinct()
+            return qs.filter(
+                course__assigned_teacher=user,
+                status__in=[Assessment.Status.DRAFT, Assessment.Status.SUBMITTED],
+            ).distinct()
         if user.role == User.Role.STUDENT:
             visible_statuses = [
                 Assessment.Status.SCHEDULED,
@@ -149,7 +152,7 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         if self.action in {"approve"}:
             return [IsAuthenticated(), IsAdminOrHOD()]
         if self.action in {"schedule"}:
-            return [IsAuthenticated(), IsAdminHODOrTeacher()]
+            return [IsAuthenticated(), IsAdminOrHOD()]
         if self.action in {"approve_schedule"}:
             return [IsAuthenticated(), IsAdminOrHOD()]
         if self.action == "submit_for_approval":
@@ -247,8 +250,10 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         )
         serializer.is_valid(raise_exception=True)
         serializer.save(assessment=assessment)
+        approved = serializer.validated_data["approve"]
+        reason = serializer.validated_data.get("reason", "")
 
-        # Notify teacher, HOD, and admins about approval
+        # Notify users about approval/rejection.
         recipients: set[int] = set()
         if assessment.course.assigned_teacher_id:
             recipients.add(int(assessment.course.assigned_teacher_id))
@@ -261,7 +266,7 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         )
         recipients |= set(User.objects.filter(role=User.Role.ADMIN, is_active=True).values_list("id", flat=True))
 
-        if recipients:
+        if approved and recipients:
             NotificationService.send_bulk_notification(
                 user_ids=recipients,
                 subject="Assessment Approved",
@@ -272,29 +277,64 @@ class AssessmentViewSet(viewsets.ModelViewSet):
                     "action": "assessment_approved",
                 },
             )
+        if not approved:
+            # Rejection reason is primarily for the course teacher.
+            body_reason = reason.strip() or "No reason provided."
+            assessment.rejected_by = request.user
+            assessment.rejected_at = timezone.now()
+            assessment.rejection_reason = body_reason
+            assessment.save(update_fields=["rejected_by", "rejected_at", "rejection_reason", "updated_at"])
+
+            reject_recipients: set[int] = set()
+            if assessment.course.assigned_teacher_id:
+                reject_recipients.add(int(assessment.course.assigned_teacher_id))
+            if assessment.created_by_id:
+                reject_recipients.add(int(assessment.created_by_id))
+
+            if reject_recipients:
+                NotificationService.send_bulk_notification(
+                    user_ids=reject_recipients,
+                    subject="Assessment Rejected",
+                    body=(
+                        f"Assessment '{assessment.title}' ({assessment.course.code}) was rejected.\n"
+                        f"Reason: {body_reason}"
+                    ),
+                    metadata={
+                        "assessment_id": str(assessment.id),
+                        "course_id": str(assessment.course.id),
+                        "action": "assessment_rejected",
+                        "reason": body_reason,
+                        "rejected_by": str(request.user.id),
+                    },
+                )
         return Response(AssessmentSerializer(assessment, context={"request": request}).data)
 
     @action(detail=True, methods=["post"])
     def schedule(self, request, *args, **kwargs):
         """
-        Teacher/HOD/Admin propose a schedule; Admin must approve it.
-
-        Schedules must be proposed using structured inputs (no free-text times).
+        HOD/Admin schedule an exam.
+        A successful schedule is auto-approved immediately.
         """
+        from apps.courses.models import CourseEnrollment
+        from apps.notifications.tasks import (
+            send_exam_reminder,
+            send_exam_reminder_24h,
+            send_exam_reminder_1h,
+            send_exam_start_now,
+        )
+
         assessment = self.get_object()
 
         if assessment.status not in {Assessment.Status.APPROVED, Assessment.Status.SCHEDULED}:
             raise ValidationError({"detail": "This assessment is not eligible for scheduling."})
 
-        # Only Admin/HOD/assigned Teacher can propose scheduling.
-        if request.user.role not in {User.Role.ADMIN, User.Role.HOD, User.Role.TEACHER}:
-            raise PermissionDenied("Only Admin, HOD, or assigned Teacher can schedule exams.")
+        # Only Admin/HOD can schedule.
+        if request.user.role not in {User.Role.ADMIN, User.Role.HOD}:
+            raise PermissionDenied("Only Admin or HOD can schedule exams.")
 
         # Role checks (backend-enforced, not just frontend filtering)
         if request.user.role == User.Role.HOD and assessment.course.department_id != request.user.department_id:
             raise PermissionDenied("You can only schedule assessments in your department.")
-        if request.user.role == User.Role.TEACHER and assessment.course.assigned_teacher_id != request.user.id:
-            raise PermissionDenied("You can only schedule assessments for your assigned courses.")
 
         serializer = AssessmentScheduleSerializer(
             data=request.data,
@@ -303,7 +343,31 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save(assessment=assessment)
 
-        # Notify HOD(s) + Admin about proposed schedule (and teacher too).
+        # Notify students about the approved schedule
+        student_ids: set[int] = set()
+        if assessment.assign_to_all and assessment.course:
+            student_ids = set(
+                CourseEnrollment.objects.filter(
+                    course=assessment.course,
+                    status=CourseEnrollment.EnrollmentStatus.ENROLLED,
+                ).values_list("student_id", flat=True)
+            )
+        else:
+            student_ids = set(assessment.assignments.values_list("student_id", flat=True))
+
+        if student_ids:
+            NotificationService.send_bulk_notification(
+                user_ids=student_ids,
+                subject="Exam Scheduled",
+                body=f"'{assessment.title}' is scheduled for {assessment.scheduled_at.strftime('%Y-%m-%d %H:%M')}.",
+                metadata={
+                    "assessment_id": str(assessment.id),
+                    "course_id": str(assessment.course.id),
+                    "type": "exam_scheduled",
+                },
+            )
+
+        # Notify HOD(s) + Admin + assigned teacher.
         recipients = list(
             User.objects.filter(
                 role=User.Role.HOD,
@@ -319,14 +383,60 @@ class AssessmentViewSet(viewsets.ModelViewSet):
 
         NotificationService.send_bulk_notification(
             user_ids=set(recipients),
-            subject="Exam Schedule Proposed",
-            body=f"Schedule proposed for '{assessment.title}' ({assessment.course.code}).",
+            subject="Exam Schedule Approved",
+            body=f"Schedule approved for '{assessment.title}' ({assessment.course.code}).",
             metadata={
                 "assessment_id": str(assessment.id),
                 "course_id": str(assessment.course.id),
-                "action": "schedule_proposed",
+                "action": "schedule_approved",
             },
         )
+
+        # Reminders: configurable offsets (default 24h + 1h) and at start.
+        if assessment.scheduled_at:
+            now = timezone.now()
+            eta_start = assessment.scheduled_at
+
+            offsets = getattr(settings, "EXAM_REMINDER_OFFSETS_HOURS", ["24", "2", "1"])
+            offsets_set = {str(o).strip() for o in offsets}
+
+            if "24" in offsets_set:
+                eta_24h = assessment.scheduled_at - timedelta(hours=24)
+                try:
+                    if eta_24h > now:
+                        send_exam_reminder_24h.apply_async(args=[str(assessment.id)], eta=eta_24h)
+                    else:
+                        send_exam_reminder_24h.delay(str(assessment.id))
+                except Exception:
+                    pass
+
+            if "2" in offsets_set:
+                eta_2h = assessment.scheduled_at - timedelta(hours=2)
+                try:
+                    if eta_2h > now:
+                        send_exam_reminder.apply_async(args=[str(assessment.id)], eta=eta_2h)
+                    else:
+                        send_exam_reminder.delay(str(assessment.id))
+                except Exception:
+                    pass
+
+            if "1" in offsets_set:
+                eta_1h = assessment.scheduled_at - timedelta(hours=1)
+                try:
+                    if eta_1h > now:
+                        send_exam_reminder_1h.apply_async(args=[str(assessment.id)], eta=eta_1h)
+                    else:
+                        send_exam_reminder_1h.delay(str(assessment.id))
+                except Exception:
+                    pass
+
+            try:
+                if eta_start > now:
+                    send_exam_start_now.apply_async(args=[str(assessment.id)], eta=eta_start)
+                else:
+                    send_exam_start_now.delay(str(assessment.id))
+            except Exception:
+                pass
 
         return Response(AssessmentSerializer(assessment, context={"request": request}).data)
 

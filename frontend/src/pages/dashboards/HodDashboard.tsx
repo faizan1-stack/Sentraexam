@@ -28,14 +28,13 @@ import {
   BookOutlined,
   CalendarOutlined,
   NotificationOutlined,
-  ReloadOutlined,
+  PlusOutlined,
   SearchOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 
-import educationIllustration from '../../assets/education-illustration.svg';
 import { useHodDashboard } from '../../api/dashboard';
 import { useNotifications } from '../../api/notifications';
 
@@ -63,10 +62,10 @@ const SectionHeader: React.FC<{
           width: 40,
           height: 40,
           borderRadius: 12,
-          background: 'rgba(33, 150, 243, 0.12)',
+          background: 'rgba(102, 126, 234, 0.14)',
           display: 'grid',
           placeItems: 'center',
-          color: '#2196f3',
+          color: '#4f46e5',
           flex: '0 0 auto',
         }}
         aria-hidden
@@ -163,9 +162,9 @@ const HodDashboard: React.FC = () => {
   const [assignmentFilter, setAssignmentFilter] = useState<'ALL' | 'ASSIGNED' | 'UNASSIGNED'>('ALL');
   const [alertsFilter, setAlertsFilter] = useState<'ALL' | 'UNREAD'>('ALL');
 
-  const teachers = data?.teachers || [];
-  const courses = data?.courses || [];
-  const notificationsList = notifications?.results || [];
+  const teachers = useMemo(() => data?.teachers || [], [data?.teachers]);
+  const courses = useMemo(() => data?.courses || [], [data?.courses]);
+  const notificationsList = useMemo(() => notifications?.results || [], [notifications?.results]);
 
   const unreadNotifications = notificationsList.filter((item) => !item.is_read).length;
   const unassignedCourses = courses.filter((course) => !course.teacher_name).length;
@@ -345,41 +344,17 @@ const HodDashboard: React.FC = () => {
       ) : null}
       {!isLoading && !error ? (
         <>
-      <Card
-        style={{
-          border: 'none',
-          background: 'linear-gradient(135deg, #0f4c81 0%, #1c7ed6 55%, #2ea8ff 100%)',
-          overflow: 'hidden',
-        }}
-        bodyStyle={{ padding: 24 }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ minWidth: 260 }}>
-            <Tag color="blue" style={{ borderRadius: 999, marginBottom: 10 }}>
-              Head of Department
-            </Tag>
-            <Title level={2} style={{ color: '#fff', margin: 0 }}>
-              {data?.department?.name || 'Department Dashboard'}
-            </Title>
-            <Text style={{ color: 'rgba(255,255,255,0.88)', display: 'block', marginTop: 6 }}>
-              Code: {data?.department?.code || 'N/A'} | Department operations, teachers, and course assignments.
-            </Text>
-            <Space style={{ marginTop: 16 }} wrap>
-              <Button onClick={() => navigate('/dashboard/courses')}>Courses</Button>
-              <Button onClick={() => navigate('/dashboard/enrollments')}>Enrollment Requests</Button>
-              <Button onClick={() => navigate('/dashboard/notifications')}>Notifications</Button>
-              <Button icon={<ReloadOutlined />} onClick={() => refetch()} loading={isFetching}>
-                Refresh
-              </Button>
-            </Space>
-          </div>
-          <img
-            src={educationIllustration}
-            alt="Department overview"
-            style={{ width: 170, maxWidth: '100%', objectFit: 'contain', opacity: 0.95 }}
-          />
-        </div>
-      </Card>
+      <div>
+        <Title level={2} style={{ marginBottom: 2 }}>
+          Head of Department Dashboard
+        </Title>
+        <Text type="secondary" style={{ display: 'block' }}>
+          Department overview, teacher assignments, and course operations.
+        </Text>
+        <Text type="secondary" style={{ display: 'block' }}>
+          {data?.department?.name || 'Department'} ({data?.department?.code || 'N/A'})
+        </Text>
+      </div>
 
       <Row gutter={[16, 16]} align="stretch">
         <Col xs={24} lg={16}>
@@ -387,7 +362,7 @@ const HodDashboard: React.FC = () => {
             <SectionHeader
               icon={<SearchOutlined />}
               title="Search & Filters"
-              subtitle="Quickly filter courses, teachers and alerts."
+              subtitle="Quickly find teachers, courses, and alerts."
             />
             <Row gutter={[12, 12]} align="middle" style={{ marginTop: 14 }}>
               <Col xs={24} xl={10}>
@@ -444,30 +419,22 @@ const HodDashboard: React.FC = () => {
               height: '100%',
             }}
           >
-            <SectionHeader icon={<TeamOutlined />} title="Quick Actions" subtitle="Create and manage faster." />
+            <SectionHeader icon={<PlusOutlined />} title="Quick Actions" subtitle="Create and manage faster." />
             <div style={{ marginTop: 14 }}>
-              <Row gutter={[10, 10]}>
-                <Col xs={24} sm={12} lg={24}>
-                  <Button block icon={<BookOutlined />} onClick={() => navigate('/dashboard/courses/new')}>
-                    Create Course
-                  </Button>
-                </Col>
-                <Col xs={24} sm={12} lg={24}>
-                  <Button block icon={<TeamOutlined />} onClick={() => navigate('/dashboard/enrollments')}>
-                    Enrollment Requests
-                  </Button>
-                </Col>
-                <Col xs={24} sm={12} lg={24}>
-                  <Button block icon={<CalendarOutlined />} onClick={() => navigate('/dashboard/assessments')}>
-                    Assessments
-                  </Button>
-                </Col>
-                <Col xs={24} sm={12} lg={24}>
-                  <Button block icon={<BellOutlined />} onClick={() => navigate('/dashboard/notifications/new')}>
-                    Send Announcement
-                  </Button>
-                </Col>
-              </Row>
+              <Space wrap>
+                <Button icon={<BookOutlined />} onClick={() => navigate('/dashboard/courses/new')}>
+                  Create Course
+                </Button>
+                <Button icon={<TeamOutlined />} onClick={() => navigate('/dashboard/enrollments')}>
+                  Enrollment Requests
+                </Button>
+                <Button icon={<CalendarOutlined />} onClick={() => navigate('/dashboard/assessments')}>
+                  Assessments
+                </Button>
+                <Button icon={<BellOutlined />} onClick={() => navigate('/dashboard/notifications/new')}>
+                  Send Announcement
+                </Button>
+              </Space>
             </div>
           </Card>
         </Col>
