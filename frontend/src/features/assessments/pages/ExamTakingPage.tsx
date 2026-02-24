@@ -225,6 +225,21 @@ const ExamTakingPage: React.FC = () => {
                 incidentType,
                 details: { reason },
             });
+
+            const violationType: ProctoringViolation['violation_type'] =
+                incidentType === 'TAB_SWITCH'
+                    ? 'TAB_SWITCH'
+                    : 'FOCUS_LOSS';
+            createClientViolation.mutate({
+                sessionId,
+                violationType,
+                severity: 2,
+                details: {
+                    reason,
+                    incident_type: incidentType,
+                    client_timestamp: new Date().toISOString(),
+                },
+            });
         }
 
         setCheatingAttempts((prevCount) => {
@@ -257,7 +272,7 @@ const ExamTakingPage: React.FC = () => {
 
             return newCount;
         });
-    }, [examCancelled, autoSubmitTriggered, reportCheatingMutation, sessionId]);
+    }, [examCancelled, autoSubmitTriggered, createClientViolation, reportCheatingMutation, sessionId]);
 
     // Anti-cheating: Fullscreen exit (ESC) detection
     useEffect(() => {
@@ -418,19 +433,51 @@ const ExamTakingPage: React.FC = () => {
 
     // Client-side AI flag (audio, camera off, etc.)
     const handleClientFlag = useCallback(
-        (violationType: ProctoringViolation['violation_type'], details?: Record<string, unknown>) => {
+        async (violationType: ProctoringViolation['violation_type'], details?: Record<string, unknown>) => {
             if (!sessionId) return;
-            createClientViolation.mutate({
-                sessionId,
-                violationType,
-                severity: 2,
-                details: {
-                    ...(details || {}),
-                    client_timestamp: new Date().toISOString(),
-                },
-            });
+            try {
+                const response = await createClientViolation.mutateAsync({
+                    sessionId,
+                    violationType,
+                    severity: 2,
+                    details: {
+                        ...(details || {}),
+                        client_timestamp: new Date().toISOString(),
+                    },
+                });
+
+                if (response.is_terminated) {
+                    Modal.error({
+                        title: 'Exam Terminated',
+                        content: (
+                            <div>
+                                <p>
+                                    Your exam has been automatically terminated due to exceeding
+                                    the maximum number of violations ({response.total_violations}).
+                                </p>
+                                <p>Your answers have been saved.</p>
+                            </div>
+                        ),
+                        okText: 'OK',
+                        centered: true,
+                        onOk: async () => {
+                            await stopAndUploadEvidenceClipIfNeeded();
+                            localStorage.removeItem(`exam_end_${id}`);
+                            localStorage.removeItem(`exam_cancelled_${id}`);
+                            localStorage.removeItem(`exam_session_${id}`);
+                            localStorage.removeItem(`exam_consent_${id}`);
+                            if (document.fullscreenElement) {
+                                document.exitFullscreen();
+                            }
+                            navigate('/dashboard/assessments');
+                        },
+                    });
+                }
+            } catch (err) {
+                console.error('Failed to log client-side proctoring violation:', err);
+            }
         },
-        [createClientViolation, sessionId]
+        [createClientViolation, id, navigate, sessionId, stopAndUploadEvidenceClipIfNeeded]
     );
 
     // Handle exam termination from proctoring (violations exceeded)

@@ -52,6 +52,24 @@ EVIDENCE_COOLDOWN_SECONDS = 30
 # Avoid spamming duplicate violations (same type) on every upload.
 VIOLATION_TYPE_COOLDOWN_SECONDS = 20
 
+WARNING_SCORE_THRESHOLD = 3
+FLAG_SCORE_THRESHOLD = 6
+TERMINATE_SCORE_THRESHOLD = 10
+
+VIOLATION_SCORE_MAP = {
+    "PHONE_DETECTED": 3,
+    "BOOK_DETECTED": 3,
+    "OBJECT_DETECTED": 3,
+    "MULTIPLE_FACES": 5,
+    "MULTIPLE_PERSONS_PATTERN": 5,
+    "LOOKING_AWAY": 2,
+    "PERSISTENT_GAZE_AWAY": 2,
+    "NO_FACE": 3,
+    "PERSON_LEFT": 3,
+    "INTERMITTENT_FACE": 3,
+    "AUDIO_TALKING": 2,
+}
+
 
 def user_can_view_session_proctoring(user: User, session: ExamSession) -> bool:
     """Backend enforcement to prevent cross-department/course leakage."""
@@ -116,6 +134,208 @@ def upload_to_imagekit(image_bytes: bytes, file_name: str, folder: str) -> str |
     except Exception as exc:
         logger.error(f"ImageKit upload failed: {exc}")
         return None
+
+
+def get_violation_score_points(violation_type: str, severity: int = 1) -> int:
+    return int(VIOLATION_SCORE_MAP.get(violation_type, max(1, int(severity or 1))))
+
+
+def get_violation_points_from_record(v: ProctoringViolation) -> int:
+    details = v.details if isinstance(v.details, dict) else {}
+    raw_points = details.get("score_points")
+    try:
+        if raw_points is not None:
+            return int(raw_points)
+    except Exception:
+        pass
+    return get_violation_score_points(v.violation_type, v.severity)
+
+
+def get_session_risk_score(session: ExamSession) -> int:
+    violations = ProctoringViolation.objects.filter(session=session, is_false_positive=False)
+    return sum(get_violation_points_from_record(v) for v in violations)
+
+
+def enrich_details_with_score(details: dict, violation_type: str, severity: int) -> dict:
+    enriched = dict(details or {})
+    enriched["score_points"] = get_violation_score_points(violation_type, severity)
+    return enriched
+
+
+def terminate_session_if_needed(session: ExamSession, risk_score: int) -> bool:
+    """Terminate an in-progress session when risk score threshold is exceeded."""
+    if risk_score < TERMINATE_SCORE_THRESHOLD or session.status != ExamSession.SessionStatus.IN_PROGRESS:
+        return False
+
+    session.status = ExamSession.SessionStatus.TERMINATED
+    session.ended_at = timezone.now()
+    session.save(update_fields=["status", "ended_at", "updated_at"])
+
+    from apps.notifications.services import NotificationService
+
+    NotificationService.send_notification(
+        user_id=session.student_id,
+        subject="Exam Auto-Terminated",
+        body=(
+            f"Your exam '{session.assessment.title}' was automatically terminated due to "
+            f"risk score reaching {risk_score} (threshold: {TERMINATE_SCORE_THRESHOLD})."
+        ),
+        metadata={
+            "assessment_id": str(session.assessment.id),
+            "session_id": str(session.id),
+            "reason": "risk_score_exceeded",
+            "risk_score": risk_score,
+            "risk_threshold": TERMINATE_SCORE_THRESHOLD,
+        },
+    )
+    logger.info(
+        "Session %s auto-terminated due to risk score: %s/%s",
+        session.id,
+        risk_score,
+        TERMINATE_SCORE_THRESHOLD,
+    )
+    return True
+
+
+def process_risk_actions(session: ExamSession, previous_score: int, current_score: int) -> dict:
+    crossed_warning = previous_score < WARNING_SCORE_THRESHOLD <= current_score
+    crossed_flag = previous_score < FLAG_SCORE_THRESHOLD <= current_score
+    crossed_terminate = previous_score < TERMINATE_SCORE_THRESHOLD <= current_score
+
+    from apps.notifications.services import NotificationService
+
+    if crossed_warning:
+        NotificationService.send_notification(
+            user_id=session.student_id,
+            subject="Proctoring Warning",
+            body=(
+                f"Your exam '{session.assessment.title}' reached risk score {current_score}. "
+                f"Please follow exam rules."
+            ),
+            metadata={
+                "session_id": str(session.id),
+                "assessment_id": str(session.assessment.id),
+                "action": "proctoring_warning",
+                "risk_score": current_score,
+                "threshold": WARNING_SCORE_THRESHOLD,
+            },
+        )
+
+    if crossed_flag:
+        recipients = []
+        if session.assessment.course.assigned_teacher_id:
+            recipients.append(session.assessment.course.assigned_teacher_id)
+        recipients += list(
+            User.objects.filter(
+                role=User.Role.HOD,
+                department_id=session.assessment.course.department_id,
+                is_active=True,
+            ).values_list("id", flat=True)
+        )
+        recipients += list(User.objects.filter(role=User.Role.ADMIN, is_active=True).values_list("id", flat=True))
+        NotificationService.send_bulk_notification(
+            user_ids=set(recipients),
+            subject="Exam Session Flagged",
+            body=(
+                f"Exam session for {session.student.email} flagged at risk score {current_score} "
+                f"in '{session.assessment.title}'."
+            ),
+            metadata={
+                "session_id": str(session.id),
+                "assessment_id": str(session.assessment.id),
+                "course_id": str(session.assessment.course.id),
+                "action": "proctoring_flagged",
+                "risk_score": current_score,
+                "threshold": FLAG_SCORE_THRESHOLD,
+            },
+        )
+
+    is_terminated = terminate_session_if_needed(session, current_score)
+    return {
+        "warning_triggered": crossed_warning,
+        "is_flagged": current_score >= FLAG_SCORE_THRESHOLD,
+        "is_terminated": is_terminated,
+        "crossed_terminate": crossed_terminate,
+    }
+
+
+def get_teacher_hod_recipients(session: ExamSession) -> set[int]:
+    recipients: set[int] = set()
+    course = getattr(session.assessment, "course", None)
+    if not course:
+        return recipients
+    if course.assigned_teacher_id:
+        recipients.add(int(course.assigned_teacher_id))
+    if course.department_id:
+        hod_ids = User.objects.filter(
+            role=User.Role.HOD,
+            department_id=course.department_id,
+            is_active=True,
+        ).values_list("id", flat=True)
+        recipients.update(int(uid) for uid in hod_ids)
+    return recipients
+
+
+def send_realtime_violation_alerts(
+    *,
+    session: ExamSession,
+    violations: list[ProctoringViolation],
+    snapshot: ProctoringSnapshot | None = None,
+    extra_metadata: dict | None = None,
+) -> None:
+    if not violations:
+        return
+
+    recipients = get_teacher_hod_recipients(session)
+    if not recipients:
+        return
+
+    from apps.notifications.services import NotificationService
+
+    base_meta = {
+        "session_id": str(session.id),
+        "assessment_id": str(session.assessment.id),
+        "course_id": str(session.assessment.course.id),
+        "student_id": int(session.student_id),
+        "student_email": session.student.email if session.student else "",
+        "action": "proctoring_violation_alert",
+    }
+    if snapshot is not None:
+        base_meta.update(
+            {
+                "snapshot_id": str(snapshot.id),
+                "snapshot_image_url": snapshot.image_url or "",
+            }
+        )
+    if extra_metadata:
+        base_meta.update(extra_metadata)
+
+    for violation in violations:
+        points = 0
+        details = violation.details if isinstance(violation.details, dict) else {}
+        try:
+            points = int(details.get("score_points") or get_violation_score_points(violation.violation_type, violation.severity))
+        except Exception:
+            points = get_violation_score_points(violation.violation_type, violation.severity)
+
+        NotificationService.send_bulk_notification(
+            user_ids=recipients,
+            subject="Live Proctoring Alert",
+            body=(
+                f"{session.student.email}: {violation.violation_type} "
+                f"(severity {violation.severity}, +{points} points)"
+            ),
+            metadata={
+                **base_meta,
+                "violation_id": str(violation.id),
+                "violation_type": violation.violation_type,
+                "severity": int(violation.severity),
+                "score_points": points,
+                "occurred_at": violation.occurred_at.isoformat() if violation.occurred_at else None,
+                "details": details,
+            },
+            ws_push=True,
+        )
 
 
 class ProctoringViewSet(viewsets.ViewSet):
@@ -245,10 +465,8 @@ class ProctoringViewSet(viewsets.ViewSet):
                 "enable_temporal_analysis": proctor_settings.enable_temporal_analysis,
                 "temporal_window_size": proctor_settings.temporal_window_size,
             }
-            max_violations = proctor_settings.max_violations_before_terminate
         except ProctoringSettings.DoesNotExist:
             settings_dict = {}
-            max_violations = 10
         
         # Get reference image file if needed
         reference_image_file = None
@@ -357,11 +575,8 @@ class ProctoringViewSet(viewsets.ViewSet):
         
         # Save violations
         created_violations = []
+        previous_score = get_session_risk_score(session)
         for v in violations:
-            conf_data = v.get("confidence_score", {})
-            # Handle float vs dict if scorer logic varies (services.py puts float in confidence_score key logic)
-            # Actually services.py logic was: v["confidence_score"] = float
-            
             # Per-type cooldown: don't create a new DB row for the same violation type every few seconds.
             vio_type = v["type"]
             recent_duplicate = ProctoringViolation.objects.filter(
@@ -373,68 +588,31 @@ class ProctoringViewSet(viewsets.ViewSet):
             if recent_duplicate:
                 continue
 
+            vio_severity = int(v.get("severity", 1))
+            vio_details = enrich_details_with_score(v.get("details") or {}, vio_type, vio_severity)
             vio_obj = ProctoringViolation.objects.create(
                 session=session,
                 snapshot=snapshot,
                 violation_type=vio_type,
-                severity=v["severity"],
-                details=v["details"],
+                severity=vio_severity,
+                details=vio_details,
                 confidence_score=v.get("confidence_score", 1.0),
                 confidence_breakdown=v.get("confidence_breakdown", {}),
             )
             created_violations.append(vio_obj)
 
-        # Notify teacher, HOD, and admin if violations detected
-        # Keep notifications low-noise: only notify on severe violations or when evidence is saved.
-        if created_violations and (evidence_saved or any(v.severity >= EVIDENCE_MIN_SEVERITY for v in created_violations)):
-            from apps.notifications.services import NotificationService
-
-            recipients = []
-            if session.assessment.course.assigned_teacher_id:
-                recipients.append(session.assessment.course.assigned_teacher_id)
-            recipients += list(User.objects.filter(
-                role=User.Role.HOD,
-                department_id=session.assessment.course.department_id,
-                is_active=True,
-            ).values_list("id", flat=True))
-            recipients += list(User.objects.filter(role=User.Role.ADMIN, is_active=True).values_list("id", flat=True))
-            NotificationService.send_bulk_notification(
-                user_ids=set(recipients),
-                subject="Proctoring Violation Detected",
-                body=f"Violation detected for {session.student.email} in '{session.assessment.title}'.",
-                metadata={
-                    "session_id": str(session.id),
-                    "assessment_id": str(session.assessment.id),
-                    "course_id": str(session.assessment.course.id),
-                    "action": "proctoring_violation",
-                },
-            )
+        # Real-time alerts for Teacher/HOD dashboards.
+        send_realtime_violation_alerts(
+            session=session,
+            violations=created_violations,
+            snapshot=snapshot,
+            extra_metadata={"evidence_saved": bool(evidence_saved)},
+        )
 
         total_violations = ProctoringViolation.objects.filter(session=session, is_false_positive=False).count()
-        
-        # Auto-terminate if violations exceeded threshold
-        is_terminated = False
-        if total_violations >= max_violations and session.status == ExamSession.SessionStatus.IN_PROGRESS:
-            session.status = ExamSession.SessionStatus.TERMINATED
-            session.ended_at = timezone.now()
-            session.save(update_fields=["status", "ended_at", "updated_at"])
-            is_terminated = True
-            
-            # Create notification for student
-            from apps.notifications.services import NotificationService
-
-            NotificationService.send_notification(
-                user_id=session.student_id,
-                subject="Exam Auto-Terminated",
-                body=f"Your exam '{session.assessment.title}' was automatically terminated due to exceeding the allowed violations limit ({max_violations}).",
-                metadata={
-                    "assessment_id": str(session.assessment.id),
-                    "session_id": str(session.id),
-                    "reason": "violations_exceeded",
-                    "total_violations": total_violations,
-                },
-            )
-            logger.info(f"Session {session.id} auto-terminated due to violations: {total_violations}/{max_violations}")
+        risk_score = get_session_risk_score(session)
+        risk_actions = process_risk_actions(session, previous_score, risk_score)
+        is_terminated = risk_actions["is_terminated"]
         
         return Response({
             "snapshot_id": str(snapshot.id) if snapshot else None,
@@ -445,8 +623,11 @@ class ProctoringViewSet(viewsets.ViewSet):
             "face_verification_confidence": face_ver.get("confidence", 0.0),
             "violations": ProctoringViolationSerializer(created_violations, many=True).data,
             "total_violations": total_violations,
+            "risk_score": risk_score,
+            "is_flagged": risk_actions["is_flagged"],
+            "warning_triggered": risk_actions["warning_triggered"],
             "is_terminated": is_terminated,
-            "violations_exceeded": total_violations >= max_violations
+            "violations_exceeded": risk_score >= TERMINATE_SCORE_THRESHOLD
         })
 
     # ... Keep other methods (session_status, etc) same or minimal update ...
@@ -465,6 +646,7 @@ class ProctoringViewSet(viewsets.ViewSet):
             
         violations = ProctoringViolation.objects.filter(session=session, is_false_positive=False)
         violation_counts = violations.values("violation_type").annotate(count=Count("id"))
+        risk_score = get_session_risk_score(session)
         
         face_registered = StudentFaceReference.objects.filter(student=session.student, is_active=True).exists()
         
@@ -472,6 +654,8 @@ class ProctoringViewSet(viewsets.ViewSet):
             "session_id": str(session_id),
             "total_snapshots": ProctoringSnapshot.objects.filter(session=session).count(),
             "total_violations": violations.count(),
+            "risk_score": risk_score,
+            "is_flagged": risk_score >= FLAG_SCORE_THRESHOLD,
             "violation_counts": {v["violation_type"]: v["count"] for v in violation_counts},
             "is_terminated": session.status == ExamSession.SessionStatus.TERMINATED,
             "face_registered": face_registered,
@@ -496,8 +680,9 @@ class ProctoringViewSet(viewsets.ViewSet):
     def create_violation(self, request, session_id=None):
         """
         Client-side assist: allow the student's browser to log a detected violation
-        (e.g., audio talking, camera off). This records evidence for human review
-        without immediately punishing the student beyond normal thresholds.
+        (e.g., audio talking, camera off, browser/tab focus violations).
+        These events are logged as normal proctoring violations and can trigger
+        threshold-based auto-termination.
         """
         try:
             session = ExamSession.objects.get(id=session_id)
@@ -508,10 +693,27 @@ class ProctoringViewSet(viewsets.ViewSet):
         if session.student != request.user:
             return Response(status=status.HTTP_403_FORBIDDEN)
 
-        violation_type = request.data.get("violation_type")
-        severity = int(request.data.get("severity", 2))
+        if session.status in [ExamSession.SessionStatus.TERMINATED, ExamSession.SessionStatus.SUBMITTED]:
+            return Response(
+                {"error": "Session already ended", "is_terminated": True, "session_status": session.status},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        violation_type = str(request.data.get("violation_type") or "").strip().upper()
+        try:
+            severity = int(request.data.get("severity", 2))
+        except Exception:
+            severity = 2
+        severity = max(1, min(5, severity))
         details = request.data.get("details") or {}
         snapshot_id = request.data.get("snapshot_id")
+
+        allowed_types = {choice[0] for choice in ProctoringViolation.ViolationType.choices}
+        if violation_type not in allowed_types:
+            return Response(
+                {"error": "Invalid violation_type", "allowed_types": sorted(allowed_types)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         snapshot = None
         if snapshot_id:
@@ -520,6 +722,35 @@ class ProctoringViewSet(viewsets.ViewSet):
             except ProctoringSnapshot.DoesNotExist:
                 snapshot = None
 
+        now = timezone.now()
+        recent_duplicate = ProctoringViolation.objects.filter(
+            session=session,
+            violation_type=violation_type,
+            occurred_at__gte=now - timedelta(seconds=VIOLATION_TYPE_COOLDOWN_SECONDS),
+            is_false_positive=False,
+        ).exists()
+        if recent_duplicate:
+            total_violations = ProctoringViolation.objects.filter(
+                session=session,
+                is_false_positive=False,
+            ).count()
+            risk_score = get_session_risk_score(session)
+            is_terminated = terminate_session_if_needed(session, risk_score)
+            return Response(
+                {
+                    "message": "Duplicate violation suppressed",
+                    "violation_type": violation_type,
+                    "total_violations": total_violations,
+                    "risk_score": risk_score,
+                    "is_flagged": risk_score >= FLAG_SCORE_THRESHOLD,
+                    "is_terminated": is_terminated,
+                    "violations_exceeded": risk_score >= TERMINATE_SCORE_THRESHOLD,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        previous_score = get_session_risk_score(session)
+        details = enrich_details_with_score(details if isinstance(details, dict) else {}, violation_type, severity)
         v = ProctoringViolation.objects.create(
             session=session,
             snapshot=snapshot,
@@ -529,12 +760,25 @@ class ProctoringViewSet(viewsets.ViewSet):
             confidence_score=float(details.get("confidence", 1.0)) if isinstance(details, dict) else 1.0,
         )
 
+        send_realtime_violation_alerts(session=session, violations=[v], snapshot=snapshot)
+
+        total_violations = ProctoringViolation.objects.filter(session=session, is_false_positive=False).count()
+        risk_score = get_session_risk_score(session)
+        risk_actions = process_risk_actions(session, previous_score, risk_score)
+        is_terminated = risk_actions["is_terminated"]
+
         return Response(
             {
                 "violation_id": str(v.id),
                 "violation_type": v.violation_type,
                 "severity": v.severity,
                 "occurred_at": v.occurred_at,
+                "total_violations": total_violations,
+                "risk_score": risk_score,
+                "is_flagged": risk_actions["is_flagged"],
+                "warning_triggered": risk_actions["warning_triggered"],
+                "is_terminated": is_terminated,
+                "violations_exceeded": risk_score >= TERMINATE_SCORE_THRESHOLD,
             },
             status=status.HTTP_201_CREATED,
         )

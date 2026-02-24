@@ -143,6 +143,8 @@ class ProctoringViolation(BaseModel):
         FACE_NOT_MATCHED = "FACE_NOT_MATCHED", "Face does not match registered student"
         AUDIO_TALKING = "AUDIO_TALKING", "Background talking detected"
         CAMERA_OFF = "CAMERA_OFF", "Camera turned off or unavailable"
+        TAB_SWITCH = "TAB_SWITCH", "Browser tab switch detected"
+        FOCUS_LOSS = "FOCUS_LOSS", "Screen focus lost or browser switched"
         OBJECT_DETECTED = "OBJECT_DETECTED", "Suspicious object detected"
         PHONE_DETECTED = "PHONE_DETECTED", "Phone detected in frame"
         BOOK_DETECTED = "BOOK_DETECTED", "Book or notes detected in frame"
@@ -245,7 +247,7 @@ class ProctoringSettings(BaseModel):
     
     # Violation settings
     max_violations_before_terminate = models.PositiveIntegerField(
-        default=10,  # Increased since we have better detection now
+        default=3,
         help_text="Auto-terminate exam after this many violations"
     )
     

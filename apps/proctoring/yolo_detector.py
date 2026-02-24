@@ -24,11 +24,8 @@ CELL_PHONE_CLASS_ID = 67
 BOOK_CLASS_ID = 73
 
 # Configurable thresholds
-CONFIDENCE_THRESHOLD = 0.5
-PERSON_CONFIDENCE_THRESHOLD = 0.6
-PHONE_CONFIDENCE_THRESHOLD = 0.4  # Lower threshold for phones (often harder to detect)
-LAPTOP_CONFIDENCE_THRESHOLD = 0.4
-BOOK_CONFIDENCE_THRESHOLD = 0.35
+# Rule: detection confidence must be greater than 0.6.
+DETECTION_CONFIDENCE_THRESHOLD = 0.6
 
 
 @dataclass
@@ -48,6 +45,8 @@ class YOLOAnalysisResult:
     phone_count: int
     laptop_detected: bool
     laptop_count: int
+    tablet_detected: bool
+    tablet_count: int
     book_detected: bool
     book_count: int
     all_detections: List[DetectionResult] = field(default_factory=list)
@@ -65,6 +64,7 @@ class YOLOAnalysisResult:
             self.has_multiple_persons
             or self.phone_detected
             or self.laptop_detected
+            or self.tablet_detected
             or self.book_detected
         )
 
@@ -130,6 +130,8 @@ class YOLODetector:
                 phone_count=0,
                 laptop_detected=False,
                 laptop_count=0,
+                tablet_detected=False,
+                tablet_count=0,
                 book_detected=False,
                 book_count=0,
                 all_detections=[],
@@ -144,16 +146,10 @@ class YOLODetector:
             image_np = np.array(image)
             
             # Run YOLO inference
-            # Only detect relevant classes to keep inference fast.
+            # Infer all classes so custom models that include "tablet" labels work.
             results = self._model(
                 image_np,
-                conf=CONFIDENCE_THRESHOLD,
-                classes=[
-                    PERSON_CLASS_ID,
-                    LAPTOP_CLASS_ID,
-                    CELL_PHONE_CLASS_ID,
-                    BOOK_CLASS_ID,
-                ],
+                conf=DETECTION_CONFIDENCE_THRESHOLD,
                 verbose=False
             )
             
@@ -162,6 +158,7 @@ class YOLODetector:
             person_count = 0
             phone_count = 0
             laptop_count = 0
+            tablet_count = 0
             book_count = 0
             
             if results and len(results) > 0:
@@ -171,7 +168,7 @@ class YOLODetector:
                     class_id = int(box.cls[0])
                     confidence = float(box.conf[0])
                     bbox = tuple(map(int, box.xyxy[0].tolist()))
-                    class_name = self._model.names[class_id]
+                    class_name = str(self._model.names[class_id]).lower()
                     
                     detection = DetectionResult(
                         class_id=class_id,
@@ -181,21 +178,32 @@ class YOLODetector:
                     )
                     detections.append(detection)
                     
-                    # Count based on class with appropriate thresholds
-                    if class_id == PERSON_CLASS_ID and confidence >= PERSON_CONFIDENCE_THRESHOLD:
+                    # Count based on class with rule confidence > 0.6
+                    if class_id == PERSON_CLASS_ID and confidence > DETECTION_CONFIDENCE_THRESHOLD:
                         person_count += 1
-                    elif class_id == CELL_PHONE_CLASS_ID and confidence >= PHONE_CONFIDENCE_THRESHOLD:
+                    elif (
+                        class_id == CELL_PHONE_CLASS_ID
+                        or "cell phone" in class_name
+                        or "mobile phone" in class_name
+                    ) and confidence > DETECTION_CONFIDENCE_THRESHOLD:
                         phone_count += 1
-                    elif class_id == LAPTOP_CLASS_ID and confidence >= LAPTOP_CONFIDENCE_THRESHOLD:
+                    elif (class_id == LAPTOP_CLASS_ID or "laptop" in class_name) and confidence > DETECTION_CONFIDENCE_THRESHOLD:
                         laptop_count += 1
-                    elif class_id == BOOK_CLASS_ID and confidence >= BOOK_CONFIDENCE_THRESHOLD:
+                    elif (
+                        class_id == BOOK_CLASS_ID
+                        or "book" in class_name
+                        or "paper" in class_name
+                    ) and confidence > DETECTION_CONFIDENCE_THRESHOLD:
                         book_count += 1
+                    elif "tablet" in class_name and confidence > DETECTION_CONFIDENCE_THRESHOLD:
+                        tablet_count += 1
             
             logger.info(
-                "YOLO detected: %s person(s), %s phone(s), %s laptop(s), %s book(s), raw detections: %s",
+                "YOLO detected: %s person(s), %s phone(s), %s laptop(s), %s tablet(s), %s book(s), raw detections: %s",
                 person_count,
                 phone_count,
                 laptop_count,
+                tablet_count,
                 book_count,
                 len(detections),
             )
@@ -206,6 +214,8 @@ class YOLODetector:
                 phone_count=phone_count,
                 laptop_detected=laptop_count > 0,
                 laptop_count=laptop_count,
+                tablet_detected=tablet_count > 0,
+                tablet_count=tablet_count,
                 book_detected=book_count > 0,
                 book_count=book_count,
                 all_detections=detections
@@ -219,6 +229,8 @@ class YOLODetector:
                 phone_count=0,
                 laptop_detected=False,
                 laptop_count=0,
+                tablet_detected=False,
+                tablet_count=0,
                 book_detected=False,
                 book_count=0,
                 all_detections=[],
