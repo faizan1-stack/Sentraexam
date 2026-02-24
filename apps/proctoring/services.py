@@ -14,8 +14,13 @@ from typing import TypedDict, Any
 from collections import deque
 
 import google.generativeai as genai
+import numpy as np
 from django.conf import settings
 from PIL import Image
+try:
+    import cv2
+except Exception:  # pragma: no cover - environment-dependent optional dependency
+    cv2 = None
 
 # YOLO-based local detection (cost-effective)
 from .yolo_detector import analyze_frame_for_proctoring, YOLOAnalysisResult
@@ -77,6 +82,29 @@ PROHIBITED_OBJECTS_MAP = {
 _temporal_analyzers: dict[str, "TemporalAnalyzer"] = {}
 # Per-process throttling to reduce cost (Gemini verification) and noise (duplicate violations).
 _last_face_verification_ts: dict[str, float] = {}
+# Per-session tracker for "continuous detection > 3s" confirmation.
+_continuous_detection_state: dict[str, dict[str, float]] = {}
+
+CONTINUOUS_CONFIRM_SECONDS = 3.0
+CONTINUOUS_CONFIRM_TYPES = {
+    "MULTIPLE_FACES",
+    "PHONE_DETECTED",
+    "BOOK_DETECTED",
+    "LAPTOP_DETECTED",
+    "OBJECT_DETECTED",
+}
+
+HEAD_AWAY_CONFIRM_SECONDS = 5.0
+FACE_MISSING_CONFIRM_SECONDS = 3.0
+REPEATED_GAZE_WINDOW_SECONDS = 20.0
+REPEATED_GAZE_BOUT_THRESHOLD = 3
+
+if cv2 is not None:
+    _face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
+else:
+    _face_cascade = None
 
 
 def analyze_snapshot_with_gemini(
@@ -207,6 +235,73 @@ def analyze_snapshot_with_gemini(
         }
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def estimate_head_pose_with_opencv(image_data: bytes) -> dict:
+    """
+    Lightweight OpenCV head-orientation estimator.
+    Uses face position relative to frame center to estimate yaw/pitch.
+    """
+    try:
+        if cv2 is None or _face_cascade is None:
+            return {"faces_detected": 0, "gaze_result": None, "is_looking_away": False, "error": "opencv_unavailable"}
+
+        frame = cv2.imdecode(np.frombuffer(image_data, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            return {"faces_detected": 0, "gaze_result": None, "is_looking_away": False, "error": "invalid_frame"}
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = _face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(60, 60),
+        )
+
+        if len(faces) == 0:
+            return {"faces_detected": 0, "gaze_result": None, "is_looking_away": False, "error": None}
+
+        # Use largest face as primary student face.
+        x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+        frame_h, frame_w = gray.shape[:2]
+        face_cx = x + (w / 2.0)
+        face_cy = y + (h / 2.0)
+        frame_cx = frame_w / 2.0
+        frame_cy = frame_h / 2.0
+
+        # Heuristic yaw/pitch estimates in degrees.
+        yaw = _clamp(((face_cx - frame_cx) / max(frame_cx, 1.0)) * 45.0, -45.0, 45.0)
+        pitch = _clamp(((face_cy - frame_cy) / max(frame_cy, 1.0)) * 35.0, -35.0, 35.0)
+
+        if yaw <= -15.0:
+            direction = "left"
+        elif yaw >= 15.0:
+            direction = "right"
+        elif pitch >= 12.0:
+            direction = "down"
+        else:
+            direction = "center"
+
+        is_away = direction in {"left", "right", "down"}
+        gaze_result: GazeResult = {
+            "direction": direction,
+            "is_looking_away": is_away,
+            "yaw": float(round(yaw, 2)),
+            "pitch": float(round(pitch, 2)),
+        }
+        return {
+            "faces_detected": int(len(faces)),
+            "gaze_result": gaze_result,
+            "is_looking_away": is_away,
+            "error": None,
+        }
+    except Exception as exc:
+        logger.warning("OpenCV head-pose estimation failed: %s", exc)
+        return {"faces_detected": 0, "gaze_result": None, "is_looking_away": False, "error": str(exc)}
+
+
 # =============================================================================
 # TEMPORAL ANALYSIS (Kept from Phase 3)
 # =============================================================================
@@ -223,6 +318,34 @@ class TemporalAnalyzer:
             **analysis_result,
             "timestamp": time.time(),
         })
+
+    @staticmethod
+    def _is_offscreen_gaze(result: dict) -> bool:
+        gaze = result.get("gaze_result") or {}
+        direction = str(gaze.get("direction") or "center").lower()
+        yaw = float(gaze.get("yaw") or 0.0)
+        pitch = float(gaze.get("pitch") or 0.0)
+        return (
+            direction in {"left", "right", "down"}
+            or bool(gaze.get("is_looking_away"))
+            or abs(yaw) >= 15.0
+            or pitch >= 12.0
+        )
+
+    @staticmethod
+    def _tail_duration_seconds(history_list: list[dict], predicate) -> float:
+        if not history_list:
+            return 0.0
+        latest_ts = float(history_list[-1].get("timestamp") or 0.0)
+        start_ts = None
+        for item in reversed(history_list):
+            if predicate(item):
+                start_ts = float(item.get("timestamp") or latest_ts)
+            else:
+                break
+        if start_ts is None:
+            return 0.0
+        return max(0.0, latest_ts - start_ts)
     
     def detect_patterns(self) -> list[dict]:
         if len(self.history) < 3: return []
@@ -230,35 +353,69 @@ class TemporalAnalyzer:
         violations = []
         history_list = list(self.history)
         
-        # Pattern 1: Intermittent Face
-        face_counts = [r.get("faces_detected", 0) for r in history_list]
-        no_face_ratio = sum(1 for f in face_counts if f == 0) / len(face_counts)
-        if no_face_ratio >= 0.3:
-            violations.append({
-                "type": "INTERMITTENT_FACE",
-                "severity": 4,
-                "details": {"message": "Face frequently disappears"}
-            })
-            
-        # Pattern 2: Persistent Gaze Away
-        gaze_results = [r.get("gaze_result") for r in history_list if r.get("gaze_result")]
-        if gaze_results:
-            def _is_away(g: dict) -> bool:
-                try:
-                    yaw = float(g.get("yaw") or 0.0)
-                    pitch = float(g.get("pitch") or 0.0)
-                except Exception:
-                    yaw = 0.0
-                    pitch = 0.0
-                return bool(g.get("is_looking_away")) or abs(yaw) >= 35.0 or abs(pitch) >= 25.0
+        # Condition 1: Face not detected continuously for >= 3 seconds.
+        missing_duration = self._tail_duration_seconds(
+            history_list,
+            lambda r: int(r.get("faces_detected") or 0) == 0,
+        )
+        if missing_duration >= FACE_MISSING_CONFIRM_SECONDS:
+            violations.append(
+                {
+                    "type": "PERSON_LEFT",
+                    "severity": 5,
+                    "details": {
+                        "message": "Face missing continuously",
+                        "duration_seconds": round(missing_duration, 2),
+                    },
+                }
+            )
 
-            away_ratio = sum(1 for g in gaze_results if _is_away(g)) / len(gaze_results)
-            if away_ratio >= 0.5:
-                violations.append({
+        # Condition 2: Head turned away/off-screen for >= 5 seconds.
+        away_duration = self._tail_duration_seconds(history_list, self._is_offscreen_gaze)
+        if away_duration >= HEAD_AWAY_CONFIRM_SECONDS:
+            latest_gaze = history_list[-1].get("gaze_result") or {}
+            violations.append(
+                {
                     "type": "PERSISTENT_GAZE_AWAY",
                     "severity": 4,
-                    "details": {"message": "Consistently looking away"}
-                })
+                    "details": {
+                        "message": "Head turned away from screen continuously",
+                        "duration_seconds": round(away_duration, 2),
+                        "direction": latest_gaze.get("direction", "unknown"),
+                        "yaw": latest_gaze.get("yaw", 0.0),
+                        "pitch": latest_gaze.get("pitch", 0.0),
+                    },
+                }
+            )
+
+        # Condition 3: Repeated off-screen gaze in short interval.
+        latest_ts = float(history_list[-1].get("timestamp") or 0.0)
+        recent = [
+            r for r in history_list
+            if latest_ts - float(r.get("timestamp") or latest_ts) <= REPEATED_GAZE_WINDOW_SECONDS
+        ]
+        gaze_bouts = 0
+        in_offscreen = False
+        for item in recent:
+            current_offscreen = self._is_offscreen_gaze(item)
+            if current_offscreen and not in_offscreen:
+                gaze_bouts += 1
+                in_offscreen = True
+            elif not current_offscreen:
+                in_offscreen = False
+
+        if gaze_bouts >= REPEATED_GAZE_BOUT_THRESHOLD:
+            violations.append(
+                {
+                    "type": "LOOKING_AWAY",
+                    "severity": 3,
+                    "details": {
+                        "message": "Repeated off-screen gaze detected",
+                        "gaze_bouts": gaze_bouts,
+                        "window_seconds": REPEATED_GAZE_WINDOW_SECONDS,
+                    },
+                }
+            )
 
         return violations
 
@@ -273,6 +430,52 @@ def clear_temporal_analyzer(session_id: str):
     if session_id in _temporal_analyzers:
         del _temporal_analyzers[session_id]
     _last_face_verification_ts.pop(session_id, None)
+    _continuous_detection_state.pop(session_id, None)
+
+
+def apply_continuous_detection_rule(
+    violations: list[dict],
+    session_id: str | None,
+    min_seconds: float = CONTINUOUS_CONFIRM_SECONDS,
+) -> list[dict]:
+    """
+    Confirm selected violations only when they are continuously present for >= min_seconds.
+    """
+    if not session_id:
+        return violations
+
+    now_ts = time.time()
+    state = _continuous_detection_state.setdefault(session_id, {})
+    violation_by_type = {str(v.get("type")): v for v in violations}
+    present_types = set(violation_by_type.keys())
+    confirmed: list[dict] = []
+
+    for violation in violations:
+        vtype = str(violation.get("type"))
+        if vtype not in CONTINUOUS_CONFIRM_TYPES:
+            confirmed.append(violation)
+            continue
+
+        start_ts = state.get(vtype)
+        if start_ts is None:
+            state[vtype] = now_ts
+            continue
+
+        elapsed = now_ts - start_ts
+        if elapsed >= min_seconds:
+            details = dict(violation.get("details") or {})
+            details["continuous_seconds"] = round(elapsed, 2)
+            confirmed.append({**violation, "details": details})
+
+    # Reset timers when a tracked violation is no longer present.
+    for tracked_type in list(state.keys()):
+        if tracked_type not in present_types:
+            del state[tracked_type]
+
+    if not state:
+        _continuous_detection_state.pop(session_id, None)
+
+    return confirmed
 
 # =============================================================================
 # CONFIDENCE SCORING (Simplified)
@@ -312,6 +515,7 @@ def analyze_snapshot_hybrid(
     """
     # YOLO detection (fast, free, local)
     yolo_result = analyze_frame_for_proctoring(image_data)
+    pose_result = estimate_head_pose_with_opencv(image_data)
     
     # Build prohibited objects list from YOLO
     prohibited = []
@@ -322,14 +526,24 @@ def analyze_snapshot_hybrid(
         prohibited.append("phone")
     if getattr(yolo_result, "laptop_detected", False):
         prohibited.append("laptop")
+    if getattr(yolo_result, "tablet_detected", False):
+        prohibited.append("tablet")
     if getattr(yolo_result, "book_detected", False):
         prohibited.append("book")
 
     for detection in yolo_result.all_detections:
-        if detection.class_name in {"cell phone", "laptop", "book"}:
+        class_name = str(detection.class_name).lower()
+        if (
+            "cell phone" in class_name
+            or "mobile phone" in class_name
+            or "laptop" in class_name
+            or "tablet" in class_name
+            or "book" in class_name
+            or "paper" in class_name
+        ):
             objects_detected.append(
                 {
-                    "class_name": detection.class_name,
+                    "class_name": class_name,
                     "confidence": detection.confidence,
                     "bbox": list(detection.bbox),
                 }
@@ -337,15 +551,15 @@ def analyze_snapshot_hybrid(
     
     # Initialize result with YOLO data
     result: AnalysisResult = {
-        "faces_detected": yolo_result.person_count,  # person count as proxy for faces
+        "faces_detected": int(pose_result.get("faces_detected", 0)),
         "face_locations": [],
         "objects_detected": objects_detected,
         "prohibited_objects": prohibited,
-        "gaze_result": None,
+        "gaze_result": pose_result.get("gaze_result"),
         "face_verification": None,
-        "is_looking_away": False,
+        "is_looking_away": bool(pose_result.get("is_looking_away", False)),
         "confidence": 0.9,
-        "error": yolo_result.error
+        "error": yolo_result.error or pose_result.get("error")
     }
     
     # Use Gemini for gaze and/or verification when requested.
@@ -356,10 +570,12 @@ def analyze_snapshot_hybrid(
                 image_data, 
                 reference_image_data
             )
-            # Merge gaze and verification from Gemini
-            result["gaze_result"] = gemini_result.get("gaze_result")
+            # Keep OpenCV gaze as primary; Gemini can fill missing gaze and verify identity.
+            if result.get("gaze_result") is None:
+                result["gaze_result"] = gemini_result.get("gaze_result")
             result["face_verification"] = gemini_result.get("face_verification")
-            result["is_looking_away"] = gemini_result.get("is_looking_away", False)
+            if result.get("gaze_result") is None:
+                result["is_looking_away"] = gemini_result.get("is_looking_away", False)
         except Exception as e:
             logger.warning(f"Gemini gaze/verification fallback failed: {e}")
     
@@ -430,6 +646,7 @@ def analyze_snapshot(
 
         # Detect Violations based on Analysis
         violations = detect_violations(analysis, settings_config or {})
+        violations = apply_continuous_detection_rule(violations, str(session_id) if session_id else None)
         
         # Add pattern violations
         for pattern in patterns:
@@ -462,8 +679,7 @@ def detect_violations(analysis: AnalysisResult, config: dict) -> list[dict]:
     logger.info(f"detect_violations: faces_detected={analysis['faces_detected']}, prohibited_objects={analysis['prohibited_objects']}")
     
     # 1. Face Detection
-    if config.get("detect_no_face", True) and analysis["faces_detected"] == 0:
-        violations.append({"type": "NO_FACE", "severity": 4, "details": {"message": "No face detected"}})
+    # NO_FACE/PERSON_LEFT is confirmed by temporal analysis (continuous 3s).
     if config.get("detect_multiple_faces", True) and analysis["faces_detected"] > 1:
         violations.append({"type": "MULTIPLE_FACES", "severity": 5, "details": {"message": "Multiple faces detected"}})
         
@@ -476,28 +692,17 @@ def detect_violations(analysis: AnalysisResult, config: dict) -> list[dict]:
                 "details": {"object": prohibited},
             })
         
-    # 3. Gaze / Head Pose (basic)
+    # 3. Gaze / Head Pose
     if config.get("detect_looking_away", True):
         gaze = analysis.get("gaze_result")
+        # LOOKING_AWAY/PERSISTENT_GAZE_AWAY is confirmed by temporal analysis
+        # to enforce time-based conditions and reduce false positives.
         if gaze:
-            yaw = float(gaze.get("yaw") or 0.0)
-            pitch = float(gaze.get("pitch") or 0.0)
-            # Use either the model's boolean OR a conservative angle threshold (basic head-pose heuristic).
-            looks_away = bool(gaze.get("is_looking_away")) or abs(yaw) >= 35.0 or abs(pitch) >= 25.0
-        else:
-            looks_away = False
-
-        if gaze and looks_away:
-            violations.append(
-                {
-                    "type": "LOOKING_AWAY",
-                    "severity": 2,
-                    "details": {
-                        "direction": gaze.get("direction", "unknown"),
-                        "yaw": gaze.get("yaw", 0.0),
-                        "pitch": gaze.get("pitch", 0.0),
-                    },
-                }
+            logger.debug(
+                "head_pose direction=%s yaw=%.2f pitch=%.2f",
+                gaze.get("direction", "unknown"),
+                float(gaze.get("yaw") or 0.0),
+                float(gaze.get("pitch") or 0.0),
             )
 
     # 4. Face verification

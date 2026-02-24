@@ -34,6 +34,15 @@ interface MotionDetector {
     calculateMotion: (canvas: HTMLCanvasElement) => number;
 }
 
+const EXAM_SILENT_MODE = true;
+const VAD_RMS_THRESHOLD = 0.035;
+const VAD_ZCR_THRESHOLD = 0.08;
+const SPEECH_START_MIN_MS = 400;
+const MULTIPLE_BURSTS_WINDOW_MS = 20_000;
+const MULTIPLE_BURSTS_THRESHOLD = 3;
+const CONTINUOUS_SPEECH_LIMIT_MS = 8_000;
+const AUDIO_FLAG_COOLDOWN_MS = 8_000;
+
 const createMotionDetector = (): MotionDetector => {
     let lastFrameData: ImageData | null = null;
 
@@ -98,7 +107,13 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const audioDataRef = useRef<Uint8Array | null>(null);
+    const audioFreqDataRef = useRef<Uint8Array | null>(null);
     const audioIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const isSpeechActiveRef = useRef(false);
+    const speechStartMsRef = useRef(0);
+    const speechBurstsRef = useRef<number[]>([]);
+    const lastAudioFlagMsRef = useRef(0);
+    const continuousSpeechFlaggedRef = useRef(false);
 
     const [isStreamingState, setisStreamingState] = useState(false);
     const [cameraError, setCameraError] = useState<string | null>(null);
@@ -149,29 +164,105 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
                     const audioCtx = new AudioContext();
                     const analyser = audioCtx.createAnalyser();
                     analyser.fftSize = 2048;
-                    analyser.smoothingTimeConstant = 0.9;
+                    analyser.smoothingTimeConstant = 0.75;
                     const source = audioCtx.createMediaStreamSource(stream);
                     source.connect(analyser);
-                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    const timeDataArray = new Uint8Array(analyser.fftSize);
+                    const freqDataArray = new Uint8Array(analyser.frequencyBinCount);
                     audioContextRef.current = audioCtx;
                     analyserRef.current = analyser;
-                    audioDataRef.current = dataArray;
+                    audioDataRef.current = timeDataArray;
+                    audioFreqDataRef.current = freqDataArray;
 
-                    // Periodically check audio level
+                    const maybeFlagAudioViolation = (
+                        rule: 'VOICE_IN_SILENT_MODE' | 'MULTIPLE_VOICE_PATTERNS' | 'CONTINUOUS_SPEAKING',
+                        payload: Record<string, unknown>,
+                    ) => {
+                        const now = Date.now();
+                        if (now - lastAudioFlagMsRef.current < AUDIO_FLAG_COOLDOWN_MS) return;
+                        lastAudioFlagMsRef.current = now;
+                        if (!onClientFlag) return;
+                        onClientFlag('AUDIO_TALKING', { rule, ...payload });
+                    };
+
                     audioIntervalRef.current = setInterval(() => {
                         const analyserNode = analyserRef.current;
-                        const arr = audioDataRef.current;
-                        if (!analyserNode || !arr) return;
-                        analyserNode.getByteFrequencyData(arr);
-                        const avg =
-                            arr.reduce((sum, v) => sum + v, 0) / arr.length;
-                        // Empirical threshold; ~30–40 quiet room, >55 voice
-                        if (avg > 55 && onClientFlag) {
-                            onClientFlag('AUDIO_TALKING', {
-                                average_level: avg,
-                            });
+                        const timeArr = audioDataRef.current;
+                        const freqArr = audioFreqDataRef.current;
+                        if (!analyserNode || !timeArr || !freqArr) return;
+
+                        analyserNode.getByteTimeDomainData(timeArr);
+                        analyserNode.getByteFrequencyData(freqArr);
+
+                        let sumSq = 0;
+                        let zeroCrossings = 0;
+                        let prev = (timeArr[0] - 128) / 128;
+                        for (let i = 0; i < timeArr.length; i += 1) {
+                            const norm = (timeArr[i] - 128) / 128;
+                            sumSq += norm * norm;
+                            if ((norm >= 0 && prev < 0) || (norm < 0 && prev >= 0)) {
+                                zeroCrossings += 1;
+                            }
+                            prev = norm;
                         }
-                    }, 2000);
+                        const rms = Math.sqrt(sumSq / timeArr.length);
+                        const zcr = zeroCrossings / timeArr.length;
+                        const avgFreq = freqArr.reduce((acc, v) => acc + v, 0) / freqArr.length;
+                        const speechLikely =
+                            rms >= VAD_RMS_THRESHOLD &&
+                            zcr >= VAD_ZCR_THRESHOLD &&
+                            avgFreq >= 12;
+                        const now = Date.now();
+
+                        if (speechLikely) {
+                            if (!isSpeechActiveRef.current) {
+                                isSpeechActiveRef.current = true;
+                                speechStartMsRef.current = now;
+                                continuousSpeechFlaggedRef.current = false;
+                            }
+
+                            const activeMs = now - speechStartMsRef.current;
+                            if (EXAM_SILENT_MODE && activeMs >= SPEECH_START_MIN_MS) {
+                                maybeFlagAudioViolation('VOICE_IN_SILENT_MODE', {
+                                    speech_duration_ms: activeMs,
+                                    rms: Number(rms.toFixed(4)),
+                                    zcr: Number(zcr.toFixed(4)),
+                                });
+                            }
+
+                            if (
+                                activeMs >= CONTINUOUS_SPEECH_LIMIT_MS &&
+                                !continuousSpeechFlaggedRef.current
+                            ) {
+                                continuousSpeechFlaggedRef.current = true;
+                                maybeFlagAudioViolation('CONTINUOUS_SPEAKING', {
+                                    speech_duration_ms: activeMs,
+                                    allowed_ms: CONTINUOUS_SPEECH_LIMIT_MS,
+                                });
+                            }
+                            return;
+                        }
+
+                        if (isSpeechActiveRef.current) {
+                            const burstDurationMs = now - speechStartMsRef.current;
+                            isSpeechActiveRef.current = false;
+                            speechStartMsRef.current = 0;
+                            continuousSpeechFlaggedRef.current = false;
+
+                            if (burstDurationMs >= SPEECH_START_MIN_MS) {
+                                speechBurstsRef.current.push(now);
+                                speechBurstsRef.current = speechBurstsRef.current.filter(
+                                    (ts) => now - ts <= MULTIPLE_BURSTS_WINDOW_MS
+                                );
+                                if (speechBurstsRef.current.length >= MULTIPLE_BURSTS_THRESHOLD) {
+                                    maybeFlagAudioViolation('MULTIPLE_VOICE_PATTERNS', {
+                                        burst_count: speechBurstsRef.current.length,
+                                        window_ms: MULTIPLE_BURSTS_WINDOW_MS,
+                                    });
+                                }
+                            }
+                        }
+                    }, 500);
                 } catch (err) {
                     console.warn('Audio analysis unavailable', err);
                 }
@@ -186,7 +277,7 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
                     : 'Failed to access camera. Please check your camera settings.'
             );
         }
-    }, []);
+    }, [onClientFlag]);
 
     // Stop webcam stream
     const stopCamera = useCallback(() => {
@@ -202,6 +293,13 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
             audioContextRef.current.close().catch(() => undefined);
             audioContextRef.current = null;
         }
+        audioDataRef.current = null;
+        audioFreqDataRef.current = null;
+        isSpeechActiveRef.current = false;
+        speechStartMsRef.current = 0;
+        speechBurstsRef.current = [];
+        continuousSpeechFlaggedRef.current = false;
+        lastAudioFlagMsRef.current = 0;
         if (videoRef.current) {
             videoRef.current.srcObject = null;
         }
@@ -360,6 +458,10 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
             MULTIPLE_FACES: 'Multiple faces detected! Only the exam taker should be visible.',
             LOOKING_AWAY: `You appear to be looking ${violation.details?.direction || 'away'}. Please keep your eyes on the screen.`,
             FACE_NOT_MATCHED: 'Face verification failed. Please ensure you are the registered student.',
+            AUDIO_TALKING: 'Unauthorized voice or conversation detected. Keep the room quiet.',
+            CAMERA_OFF: 'Camera feed lost. Restore your camera immediately.',
+            TAB_SWITCH: 'Browser tab switching detected. Stay on the exam window.',
+            FOCUS_LOSS: 'Screen focus loss detected. Keep the exam window active.',
             OBJECT_DETECTED: 'Suspicious object detected. Please remove any unauthorized items.',
             PHONE_DETECTED: 'Phone detected. Remove all mobile devices from the camera view.',
             BOOK_DETECTED: 'Book or notes detected. Remove all study materials from view.',

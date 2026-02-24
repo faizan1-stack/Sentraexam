@@ -33,6 +33,8 @@ export interface ProctoringViolation {
     | 'FACE_NOT_MATCHED'
     | 'AUDIO_TALKING'
     | 'CAMERA_OFF'
+    | 'TAB_SWITCH'
+    | 'FOCUS_LOSS'
     | 'OBJECT_DETECTED'
     | 'PHONE_DETECTED'
     | 'BOOK_DETECTED'
@@ -62,6 +64,9 @@ export interface SnapshotUploadResponse {
     face_verification_confidence: number;
     violations: ProctoringViolation[];
     total_violations: number;
+    risk_score?: number;
+    is_flagged?: boolean;
+    warning_triggered?: boolean;
     violations_exceeded: boolean;
     is_terminated: boolean;
 }
@@ -70,6 +75,8 @@ export interface ProctoringStatus {
     session_id: string;
     total_snapshots: number;
     total_violations: number;
+    risk_score?: number;
+    is_flagged?: boolean;
     violation_counts: Record<string, number>;
     is_terminated: boolean;
     face_registered: boolean;
@@ -452,7 +459,19 @@ export const createClientViolation = async ({
     severity?: number;
     details?: Record<string, unknown>;
     snapshotId?: string;
-}) => {
+}): Promise<{
+    violation_id?: string;
+    violation_type: ProctoringViolation['violation_type'];
+    severity?: number;
+    occurred_at?: string;
+    total_violations: number;
+    risk_score?: number;
+    is_flagged?: boolean;
+    warning_triggered?: boolean;
+    is_terminated: boolean;
+    violations_exceeded: boolean;
+    message?: string;
+}> => {
     const { data } = await apiClient.post(`/proctoring/session/${sessionId}/violations/`, {
         violation_type: violationType,
         severity: severity ?? 2,
