@@ -13,7 +13,7 @@ const DepartmentEditPage: React.FC = () => {
   const [form] = Form.useForm();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const departmentId = parseInt(id || '0');
+  const departmentId = id ?? '';
 
   const { data: department, isLoading } = useDepartment(departmentId);
   const updateMutation = useUpdateDepartment();

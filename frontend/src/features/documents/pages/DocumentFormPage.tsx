@@ -5,7 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useDocument, useCreateDocument, useUpdateDocument } from '../../../api/documents';
 import { useDocumentCategories } from '../../../api/documents';
 import { useDepartments } from '../../../api/departments';
-import type { CreateDocumentPayload, DocumentAccessLevel } from '../../../types/index';
+import type { CreateDocumentPayload } from '../../../types/index';
 
 const { Title } = Typography;
 const { TextArea } = Input;

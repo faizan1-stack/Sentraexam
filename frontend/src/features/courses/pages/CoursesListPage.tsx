@@ -47,7 +47,7 @@ const CoursesListPage: React.FC = () => {
         id: e.course,
         code: e.course_code || '',
         title: e.course_title || '',
-        department: e.course_department,
+        department: e.course_department || '',
         department_name: e.department_name || '',
         credits: 0, // Not available in enrollment
         status: CourseStatus.ACTIVE,

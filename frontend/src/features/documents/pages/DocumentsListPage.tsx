@@ -13,7 +13,7 @@ const DocumentsListPage: React.FC = () => {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [accessLevelFilter, setAccessLevelFilter] = useState<string | undefined>();
-  const [categoryFilter, setCategoryFilter] = useState<number | undefined>();
+  const [categoryFilter] = useState<number | undefined>();
   const [page, setPage] = useState(1);
 
   const { data, isLoading, error, refetch } = useDocuments({
@@ -40,9 +40,9 @@ const DocumentsListPage: React.FC = () => {
     );
   }
 
-  const handleDelete = async (document: Document) => {
+  const handleDelete = async (doc: Document) => {
     try {
-      await deleteMutation.mutateAsync(document.id);
+      await deleteMutation.mutateAsync(doc.id);
       message.success('Document deleted successfully');
       refetch();
     } catch (error: any) {
@@ -50,20 +50,20 @@ const DocumentsListPage: React.FC = () => {
     }
   };
 
-  const handleDownload = async (document: Document) => {
+  const handleDownload = async (doc: Document) => {
     try {
-      const blob = await downloadMutation.mutateAsync(document.id);
+      const blob = await downloadMutation.mutateAsync(doc.id);
 
       // Create download link
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = window.document.createElement('a');
       link.href = url;
 
       // Extract filename from response or use document title
-      const filename = document.title + '.pdf'; // Assuming PDF, adjust as needed
+      const filename = doc.title + '.pdf'; // Assuming PDF, adjust as needed
       link.setAttribute('download', filename);
 
-      document.body.appendChild(link);
+      window.document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
@@ -123,7 +123,7 @@ const DocumentsListPage: React.FC = () => {
       filters: [
         { text: 'Institution', value: DocumentAccessLevel.INSTITUTION },
         { text: 'Department', value: DocumentAccessLevel.DEPARTMENT },
-        { text: 'Personal', value: DocumentAccessLevel.PERSONAL },
+        { text: 'Private', value: DocumentAccessLevel.PRIVATE },
       ],
     },
     {

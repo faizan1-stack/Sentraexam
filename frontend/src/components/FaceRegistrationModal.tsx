@@ -5,7 +5,6 @@ import {
     Space,
     Typography,
     Alert,
-    Progress,
     Steps,
     message,
 } from 'antd';
@@ -14,7 +13,6 @@ import {
     CheckCircleOutlined,
     LoadingOutlined,
     UserOutlined,
-    WarningOutlined,
 } from '@ant-design/icons';
 import { useRegisterFace, useFaceStatus } from '../api/proctoring';
 
@@ -42,7 +40,7 @@ const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({
     const [step, setStep] = useState<'capture' | 'preview' | 'uploading' | 'success'>('capture');
 
     const registerFaceMutation = useRegisterFace();
-    const { data: faceStatus, refetch: refetchFaceStatus } = useFaceStatus();
+    const { refetch: refetchFaceStatus } = useFaceStatus();
 
     // Start camera
     const startCamera = useCallback(async () => {
@@ -134,7 +132,7 @@ const FaceRegistrationModal: React.FC<FaceRegistrationModalProps> = ({
         setStep('uploading');
 
         try {
-            const result = await registerFaceMutation.mutateAsync(capturedImage);
+            await registerFaceMutation.mutateAsync(capturedImage);
             message.success('Face registered successfully!');
             setStep('success');
 

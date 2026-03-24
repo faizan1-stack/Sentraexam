@@ -314,7 +314,7 @@ export const useGradeSubmission = () => {
   return useMutation({
     mutationFn: ({ submissionId, score, feedback }: { submissionId: string; score: number; feedback?: string }) =>
       gradeSubmission(submissionId, score, feedback),
-    onSuccess: (_, variables) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assessment-submissions'] });
       queryClient.invalidateQueries({ queryKey: ['assessments'] });
     },

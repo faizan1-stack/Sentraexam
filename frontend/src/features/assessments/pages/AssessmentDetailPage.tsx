@@ -18,7 +18,6 @@ import {
   Row,
   Col,
   Tooltip,
-  Tabs,
   List,
 } from 'antd';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -741,7 +740,7 @@ const StudentSubmissionPanel: React.FC<{ assessment: AssessmentModel }> = ({ ass
   const requiresFile =
     assessment.submission_format === AssessmentSubmissionFormat.FILE ||
     assessment.submission_format === AssessmentSubmissionFormat.TEXT_AND_FILE;
-  const allowedStatuses = [
+  const allowedStatuses: AssessmentStatus[] = [
     AssessmentStatus.APPROVED,
     AssessmentStatus.SCHEDULED,
     AssessmentStatus.IN_PROGRESS,

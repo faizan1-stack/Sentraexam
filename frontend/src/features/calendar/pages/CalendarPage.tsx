@@ -8,8 +8,6 @@ import { useAcademicYears } from '../../../api/calendar';
 import { useAcademicTerms } from '../../../api/calendar';
 import { useDepartments } from '../../../api/departments';
 import { useCourses } from '../../../api/courses';
-import type { CalendarEvent } from '../../../types/index';
-
 const { Title } = Typography;
 const { TextArea } = Input;
 
@@ -64,7 +62,7 @@ const CalendarPage: React.FC = () => {
         event_type: values.event_type,
         start_at: values.start_at.format('YYYY-MM-DDTHH:mm:ss'),
         end_at: values.end_at.format('YYYY-MM-DDTHH:mm:ss'),
-        academic_term: termFilter,
+        academic_term: termFilter!,
         department: values.department || undefined,
         course: values.course || undefined,
       };
@@ -202,7 +200,6 @@ const CalendarPage: React.FC = () => {
             onSelect={handleDateSelect}
             dateCellRender={dateCellRender}
             monthCellRender={monthCellRender}
-            loading={isLoading}
           />
         </Card>
 
@@ -249,7 +246,7 @@ const CalendarPage: React.FC = () => {
                     }
                     description={
                       <div>
-                        <Tag size="small" color="blue">
+                        <Tag color="blue">
                           {event.event_type}
                         </Tag>
                         <div style={{ fontSize: '12px', color: 'var(--muted-ink)', marginTop: 4 }}>

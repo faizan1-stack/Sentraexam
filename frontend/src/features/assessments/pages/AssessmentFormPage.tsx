@@ -13,8 +13,6 @@ import {
   Divider,
   Row,
   Col,
-  Steps,
-  theme,
 } from 'antd';
 import { useNavigate, useParams } from 'react-router-dom';
 import { MinusCircleOutlined, PlusOutlined, SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
@@ -24,7 +22,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import type { CreateAssessmentPayload, AssessmentStatus } from '../../../types/index';
 import { AssessmentSubmissionFormat, AssessmentType, UserRole } from '../../../types/index';
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
 
@@ -33,7 +31,6 @@ const AssessmentFormPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const assessmentId = id || undefined;
-  const { token } = theme.useToken();
   const { user } = useAuth();
 
   const [form] = Form.useForm();
@@ -324,9 +321,7 @@ const AssessmentFormPage: React.FC = () => {
                         <Form.Item
                           {...field}
                           label="Content Type"
-                          name={[field.name, 'content_type']}
-                          fieldKey={[field.fieldKey, 'content_type']}
-                          rules={[{ required: true, message: 'Select content type' }]}
+                          name={[field.name, 'content_type']}                          rules={[{ required: true, message: 'Select content type' }]}
                         >
                           <Select placeholder="Select content type">
                             <Option value="INSTRUCTION">Instruction</Option>
@@ -337,18 +332,14 @@ const AssessmentFormPage: React.FC = () => {
                         <Form.Item
                           {...field}
                           label="Title"
-                          name={[field.name, 'title']}
-                          fieldKey={[field.fieldKey, 'title']}
-                          rules={[{ required: true, message: 'Enter block title' }]}
+                          name={[field.name, 'title']}                          rules={[{ required: true, message: 'Enter block title' }]}
                         >
                           <Input placeholder="e.g., Question 1" />
                         </Form.Item>
                         <Form.Item
                           {...field}
                           label="Body"
-                          name={[field.name, 'body']}
-                          fieldKey={[field.fieldKey, 'body']}
-                          rules={[{ required: true, message: 'Enter block content' }]}
+                          name={[field.name, 'body']}                          rules={[{ required: true, message: 'Enter block content' }]}
                         >
                           <TextArea rows={4} placeholder="Provide details, prompts, or resources..." />
                         </Form.Item>
@@ -418,9 +409,7 @@ const AssessmentFormPage: React.FC = () => {
                               <Col span={16}>
                                 <Form.Item
                                   {...field}
-                                  name={[field.name, 'type']}
-                                  fieldKey={[field.fieldKey, 'type']}
-                                  label="Type"
+                                  name={[field.name, 'type']}                                  label="Type"
                                   rules={[{ required: true, message: 'Select type' }]}
                                 >
                                   <Select>
@@ -432,9 +421,7 @@ const AssessmentFormPage: React.FC = () => {
                               <Col span={8}>
                                 <Form.Item
                                   {...field}
-                                  name={[field.name, 'marks']}
-                                  fieldKey={[field.fieldKey, 'marks']}
-                                  label="Marks"
+                                  name={[field.name, 'marks']}                                  label="Marks"
                                   rules={[{ required: true, message: 'Enter marks' }]}
                                 >
                                   <InputNumber min={1} style={{ width: '100%' }} />
@@ -444,9 +431,7 @@ const AssessmentFormPage: React.FC = () => {
 
                             <Form.Item
                               {...field}
-                              name={[field.name, 'prompt']}
-                              fieldKey={[field.fieldKey, 'prompt']}
-                              label="Question Prompt"
+                              name={[field.name, 'prompt']}                              label="Question Prompt"
                               rules={[{ required: true, message: 'Enter the question prompt' }]}
                             >
                               <Input.TextArea rows={2} placeholder="Enter question prompt..." />
@@ -482,9 +467,7 @@ const AssessmentFormPage: React.FC = () => {
                                         >
                                           <Form.Item
                                             {...optField}
-                                            name={[optField.name, 'text']}
-                                            fieldKey={[optField.fieldKey, 'text']}
-                                            style={{ flex: 1, marginBottom: 0 }}
+                                            name={[optField.name, 'text']}                                            style={{ flex: 1, marginBottom: 0 }}
                                             rules={[{ required: true, message: 'Enter option text' }]}
                                           >
                                             <Input prefix={<span style={{ color: '#bfbfbf', marginRight: 4 }}>{String.fromCharCode(65 + optIndex)}.</span>} placeholder={`Option ${optIndex + 1}`} />

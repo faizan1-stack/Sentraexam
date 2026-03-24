@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, useLayoutEffect } from 'react';
+import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle, useLayoutEffect } from 'react';
 import { Alert, Badge, Space, Typography, Modal, Tooltip, theme } from 'antd';
 import {
     CameraOutlined,
@@ -106,8 +106,8 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
     const lastCaptureTimeRef = useRef<number>(0);
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
-    const audioDataRef = useRef<Uint8Array | null>(null);
-    const audioFreqDataRef = useRef<Uint8Array | null>(null);
+    const audioDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+    const audioFreqDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
     const audioIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const isSpeechActiveRef = useRef(false);
     const speechStartMsRef = useRef(0);
@@ -118,7 +118,7 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
     const [isStreamingState, setisStreamingState] = useState(false);
     const [cameraError, setCameraError] = useState<string | null>(null);
     const [violationCount, setViolationCount] = useState(0);
-    const [lastViolation, setLastViolation] = useState<ProctoringViolation | null>(null);
+    const [, setLastViolation] = useState<ProctoringViolation | null>(null);
     const [lastViolationMessage, setLastViolationMessage] = useState<string | null>(null);
     const [currentGaze, setCurrentGaze] = useState<GazeResult | null>(null);
     const [faceVerified, setFaceVerified] = useState(true);

@@ -147,6 +147,7 @@ export interface CourseEnrollment {
   course: string;
   course_code: string;
   course_title: string;
+  course_department?: string;
   department_name: string;
   student: number;
   student_email: string;
@@ -414,13 +415,26 @@ export interface CreateDocumentPayload {
 }
 
 // Notification Types
-export interface Announcement {
+export interface AnnouncementRecipient {
   id: string;
+  announcement: number;
+  user: number;
+  user_email: string;
+  read_at: string | null;
+  delivered_at: string | null;
+  created_at: string;
+}
+
+export interface Announcement {
+  id: number;
   title: string;
-  content: string;
-  audience: string;
+  message: string;
+  audience: AnnouncementAudience;
+  status: AnnouncementStatus;
   department: string | null;
   course: string | null;
+  scheduled_for: string | null;
+  sent_at: string | null;
   created_by: string;
   created_by_email: string;
   created_at: string;
@@ -429,10 +443,12 @@ export interface Announcement {
 
 export interface CreateAnnouncementPayload {
   title: string;
-  content: string;
-  audience: string;
+  message: string;
+  audience: AnnouncementAudience | string;
+  status?: AnnouncementStatus | string;
   department?: string | null;
   course?: string | null;
+  scheduled_for?: string | null;
 }
 
 // Pagination Types
