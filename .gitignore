@@ -26,3 +26,6 @@ db.sqlite3
 
 # Misc
 celerybeat-schedule
+
+# Frontend build output
+frontend/dist/
