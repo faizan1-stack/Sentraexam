@@ -63,6 +63,8 @@ const ExamTakingPage: React.FC = () => {
     const [showFaceRegistration, setShowFaceRegistration] = useState(false);
     const [autoSubmitTriggered, setAutoSubmitTriggered] = useState(false);
     const [lastViolationReason, setLastViolationReason] = useState<string>('');
+    const [cameraReady, setCameraReady] = useState(false);
+    const [cameraError, setCameraError] = useState<string | null>(null);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const isSubmittingRef = useRef(false);
@@ -495,6 +497,11 @@ const ExamTakingPage: React.FC = () => {
         navigate('/dashboard/assessments');
     }, [id, navigate, stopAndUploadEvidenceClipIfNeeded]);
 
+    const handleCameraStatusChange = useCallback((status: { ready: boolean; error: string | null }) => {
+        setCameraReady(status.ready);
+        setCameraError(status.error);
+    }, []);
+
     // Start exam
     const startExam = async () => {
         if (!proctoringConsent) {
@@ -507,6 +514,25 @@ const ExamTakingPage: React.FC = () => {
         // Check for face registration
         if (isFaceRegistrationRequired) {
             setShowFaceRegistration(true);
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true,
+            });
+            stream.getTracks().forEach((track) => track.stop());
+            setCameraReady(true);
+            setCameraError(null);
+        } catch (error: any) {
+            const nextError =
+                error?.name === 'NotAllowedError'
+                    ? 'Camera permission denied. Please allow webcam and microphone access before starting the exam.'
+                    : 'Unable to access webcam. Check browser permissions and camera availability.';
+            setCameraReady(false);
+            setCameraError(nextError);
+            message.error(nextError);
             return;
         }
 
@@ -745,6 +771,14 @@ const ExamTakingPage: React.FC = () => {
                             type="info"
                             showIcon
                         />
+                        {cameraError && (
+                            <Alert
+                                message="Camera Access Required"
+                                description={cameraError}
+                                type="error"
+                                showIcon
+                            />
+                        )}
                         <div style={{ textAlign: 'left', padding: '12px', background: 'var(--surface-muted)', borderRadius: 8, border: '1px solid var(--stroke)' }}>
                             <Checkbox
                                 checked={proctoringConsent}
@@ -894,10 +928,12 @@ const ExamTakingPage: React.FC = () => {
                     snapshotIntervalSeconds={(assessment as any).proctoring_settings?.snapshot_interval_seconds || 10}
                     motionThreshold={(assessment as any).proctoring_settings?.motion_threshold || 30}
                     requireFaceVerification={!!(assessment as any).proctoring_settings?.require_face_verification}
+                    useMotionDetection={(assessment as any).proctoring_settings?.use_motion_detection !== false}
                     onViolation={handleProctoringViolation}
                     onTerminated={handleExamTerminated}
                     enabled={examStarted && !examCancelled && !submitting}
                     onClientFlag={handleClientFlag}
+                    onCameraStatusChange={handleCameraStatusChange}
                 />
             )}
         </div>

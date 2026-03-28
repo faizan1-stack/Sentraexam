@@ -22,6 +22,14 @@ export interface ConfidenceScore {
     is_reliable: boolean;
 }
 
+export interface RiskThresholds {
+    warning: number;
+    flag: number;
+    terminate: number;
+}
+
+export type RiskLevel = 'low' | 'elevated' | 'high' | 'critical';
+
 export interface ProctoringViolation {
     id: string;
     session: string;
@@ -65,6 +73,8 @@ export interface SnapshotUploadResponse {
     violations: ProctoringViolation[];
     total_violations: number;
     risk_score?: number;
+    risk_level?: RiskLevel;
+    risk_thresholds?: RiskThresholds;
     is_flagged?: boolean;
     warning_triggered?: boolean;
     violations_exceeded: boolean;
@@ -76,6 +86,8 @@ export interface ProctoringStatus {
     total_snapshots: number;
     total_violations: number;
     risk_score?: number;
+    risk_level?: RiskLevel;
+    risk_thresholds?: RiskThresholds;
     is_flagged?: boolean;
     violation_counts: Record<string, number>;
     is_terminated: boolean;
@@ -466,6 +478,8 @@ export const createClientViolation = async ({
     occurred_at?: string;
     total_violations: number;
     risk_score?: number;
+    risk_level?: RiskLevel;
+    risk_thresholds?: RiskThresholds;
     is_flagged?: boolean;
     warning_triggered?: boolean;
     is_terminated: boolean;

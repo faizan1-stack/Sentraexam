@@ -8,7 +8,7 @@ import {
     UserOutlined,
 } from '@ant-design/icons';
 import { useUploadSnapshot, useEndSessionProctoring } from '../api/proctoring';
-import type { ProctoringViolation, GazeResult } from '../api/proctoring';
+import type { ProctoringViolation, GazeResult, RiskLevel, RiskThresholds } from '../api/proctoring';
 
 const { Text } = Typography;
 
@@ -20,7 +20,9 @@ interface WebcamProctorProps {
     onTerminated?: () => void;
     enabled?: boolean;
     requireFaceVerification?: boolean;
+    useMotionDetection?: boolean;
     onClientFlag?: (violationType: ProctoringViolation['violation_type'], details?: Record<string, unknown>) => void;
+    onCameraStatusChange?: (status: { ready: boolean; error: string | null }) => void;
 }
 
 // Expose these methods via ref to parent components
@@ -95,7 +97,9 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
     onTerminated,
     enabled = true,
     requireFaceVerification = true,
+    useMotionDetection = true,
     onClientFlag,
+    onCameraStatusChange,
 }, ref) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -114,6 +118,7 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
     const speechBurstsRef = useRef<number[]>([]);
     const lastAudioFlagMsRef = useRef(0);
     const continuousSpeechFlaggedRef = useRef(false);
+    const lastModalRef = useRef<{ type: string; ts: number } | null>(null);
 
     const [isStreamingState, setisStreamingState] = useState(false);
     const [cameraError, setCameraError] = useState<string | null>(null);
@@ -124,6 +129,9 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
     const [faceVerified, setFaceVerified] = useState(true);
     const [faceVerificationConfidence, setFaceVerificationConfidence] = useState(0);
     const [isUploading, setIsUploading] = useState(false);
+    const [riskScore, setRiskScore] = useState(0);
+    const [riskLevel, setRiskLevel] = useState<RiskLevel>('low');
+    const [riskThresholds, setRiskThresholds] = useState<RiskThresholds>({ warning: 3, flag: 6, terminate: 10 });
 
     const { token } = theme.useToken();
     const uploadMutation = useUploadSnapshot();
@@ -157,6 +165,7 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
                 streamRef.current = stream;
                 setisStreamingState(true);
                 setCameraError(null);
+                onCameraStatusChange?.({ ready: true, error: null });
                 console.log('Stream assigned to video element, setisStreamingState(true) called');
 
                 // Set up audio analyser for voice detection
@@ -271,13 +280,14 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
             }
         } catch (error: any) {
             console.error('Camera error:', error);
-            setCameraError(
+            const nextError =
                 error.name === 'NotAllowedError'
                     ? 'Camera permission denied. Please allow camera access for proctoring.'
-                    : 'Failed to access camera. Please check your camera settings.'
-            );
+                    : 'Failed to access camera. Please check your camera settings.';
+            setCameraError(nextError);
+            onCameraStatusChange?.({ ready: false, error: nextError });
         }
-    }, [onClientFlag]);
+    }, [onCameraStatusChange, onClientFlag]);
 
     // Stop webcam stream
     const stopCamera = useCallback(() => {
@@ -304,7 +314,8 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
             videoRef.current.srcObject = null;
         }
         setisStreamingState(false);
-    }, []);
+        onCameraStatusChange?.({ ready: false, error: null });
+    }, [onCameraStatusChange]);
 
     // Calculate motion score
     const getMotionScore = useCallback((): number => {
@@ -385,6 +396,16 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
                             });
                         }
 
+                        if (typeof response.risk_score === 'number') {
+                            setRiskScore(response.risk_score);
+                        }
+                        if (response.risk_level) {
+                            setRiskLevel(response.risk_level);
+                        }
+                        if (response.risk_thresholds) {
+                            setRiskThresholds(response.risk_thresholds);
+                        }
+
                         // Debugging total violations count update
                         if (response.total_violations !== violationCount) {
                             console.log(`[WebcamProctor] Updating total violations: ${violationCount} -> ${response.total_violations}`);
@@ -453,6 +474,16 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
 
     // Show violation warning modal
     const showViolationWarning = (violation: ProctoringViolation) => {
+        const now = Date.now();
+        if (
+            lastModalRef.current &&
+            lastModalRef.current.type === violation.violation_type &&
+            now - lastModalRef.current.ts < 8000
+        ) {
+            return;
+        }
+        lastModalRef.current = { type: violation.violation_type, ts: now };
+
         const messages: Record<string, string> = {
             NO_FACE: 'Your face is not visible. Please position yourself in front of the camera.',
             MULTIPLE_FACES: 'Multiple faces detected! Only the exam taker should be visible.',
@@ -507,7 +538,7 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
 
     // Motion detection loop
     useEffect(() => {
-        if (isStreamingState && enabled) {
+        if (isStreamingState && enabled && useMotionDetection) {
             motionIntervalRef.current = setInterval(() => {
                 const motionScore = getMotionScore();
 
@@ -524,7 +555,7 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
                 }
             };
         }
-    }, [isStreamingState, enabled, getMotionScore, motionThreshold]);
+    }, [isStreamingState, enabled, getMotionScore, motionThreshold, useMotionDetection]);
 
     // Regular snapshot interval
     useEffect(() => {
@@ -634,12 +665,22 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
         return `Looking ${currentGaze.direction}`;
     };
 
-    const statusPanelBg =
-        violationCount >= 3
-            ? token.colorErrorBg
-            : violationCount > 0
-                ? token.colorWarningBg
-                : token.colorSuccessBg;
+    const riskVisuals: Record<RiskLevel, { label: string; color: string; bg: string }> = {
+        low: { label: 'Low Risk', color: token.colorSuccess, bg: token.colorSuccessBg },
+        elevated: { label: 'Elevated', color: token.colorWarning, bg: token.colorWarningBg },
+        high: { label: 'High Risk', color: token.colorError, bg: token.colorErrorBg },
+        critical: { label: 'Critical', color: token.colorErrorActive, bg: token.colorErrorBg },
+    };
+
+    const riskUi = riskVisuals[riskLevel];
+    const statusPanelBg = riskUi.bg;
+    const riskProgress = Math.min(100, Math.round((riskScore / Math.max(riskThresholds.terminate, 1)) * 100));
+    const latestRiskLabel =
+        riskScore >= riskThresholds.terminate
+            ? `Terminate @ ${riskThresholds.terminate}`
+            : riskScore >= riskThresholds.flag
+                ? `Flagged @ ${riskThresholds.flag}`
+                : `Warn @ ${riskThresholds.warning}`;
 
     return (
         <div
@@ -761,6 +802,55 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
                         </div>
                     )}
 
+                    <div
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: 8,
+                        }}
+                    >
+                        <Text strong style={{ fontSize: 12, color: riskUi.color }}>
+                            {riskUi.label}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: token.colorTextSecondary }}>
+                            Score {riskScore}/{riskThresholds.terminate}
+                        </Text>
+                    </div>
+
+                    <div
+                        style={{
+                            height: 6,
+                            borderRadius: 999,
+                            overflow: 'hidden',
+                            background: token.colorFillSecondary,
+                        }}
+                    >
+                        <div
+                            style={{
+                                width: `${riskProgress}%`,
+                                height: '100%',
+                                background: riskUi.color,
+                                transition: 'width 180ms ease',
+                            }}
+                        />
+                    </div>
+
+                    <div
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                        }}
+                    >
+                        <Text style={{ fontSize: 11, color: token.colorTextSecondary }}>
+                            {latestRiskLabel}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: token.colorTextSecondary }}>
+                            {useMotionDetection ? 'Motion On' : 'Motion Off'}
+                        </Text>
+                    </div>
+
                     {/* Gaze status */}
                     <div
                         style={{
@@ -770,6 +860,9 @@ const WebcamProctor = forwardRef<WebcamProctorHandle, WebcamProctorProps>(({
                         }}
                     >
                         <Text style={{ fontSize: 12, color: violationCount >= 3 ? '#ff7875' : getGazeColor() }}>{getGazeDisplay()}</Text>
+                        <Text style={{ fontSize: 11, color: token.colorTextSecondary }}>
+                            {faceVerified ? 'ID OK' : 'ID Check'}
+                        </Text>
                     </div>
 
                     {/* Violation counter */}

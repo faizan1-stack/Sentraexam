@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import timedelta
 
 from django.core.files.base import ContentFile
@@ -156,6 +157,42 @@ def get_session_risk_score(session: ExamSession) -> int:
     return sum(get_violation_points_from_record(v) for v in violations)
 
 
+def get_session_risk_thresholds(session: ExamSession) -> dict[str, int]:
+    """
+    Build assessment-aware risk thresholds.
+
+    `max_violations_before_terminate` is interpreted as an instructor-friendly policy control,
+    while the engine still works on weighted risk points.
+    """
+    terminate_threshold = TERMINATE_SCORE_THRESHOLD
+    try:
+        configured_limit = int(session.assessment.proctoring_settings.max_violations_before_terminate or 0)
+    except Exception:
+        configured_limit = 0
+
+    if configured_limit > 0:
+        terminate_threshold = max(6, configured_limit * 3)
+
+    warning_threshold = max(2, math.ceil(terminate_threshold * 0.3))
+    flag_threshold = max(warning_threshold + 1, math.ceil(terminate_threshold * 0.6))
+
+    return {
+        "warning": int(warning_threshold),
+        "flag": int(flag_threshold),
+        "terminate": int(terminate_threshold),
+    }
+
+
+def get_risk_level(score: int, thresholds: dict[str, int]) -> str:
+    if score >= int(thresholds["terminate"]):
+        return "critical"
+    if score >= int(thresholds["flag"]):
+        return "high"
+    if score >= int(thresholds["warning"]):
+        return "elevated"
+    return "low"
+
+
 def enrich_details_with_score(details: dict, violation_type: str, severity: int) -> dict:
     enriched = dict(details or {})
     enriched["score_points"] = get_violation_score_points(violation_type, severity)
@@ -164,7 +201,9 @@ def enrich_details_with_score(details: dict, violation_type: str, severity: int)
 
 def terminate_session_if_needed(session: ExamSession, risk_score: int) -> bool:
     """Terminate an in-progress session when risk score threshold is exceeded."""
-    if risk_score < TERMINATE_SCORE_THRESHOLD or session.status != ExamSession.SessionStatus.IN_PROGRESS:
+    thresholds = get_session_risk_thresholds(session)
+    terminate_threshold = int(thresholds["terminate"])
+    if risk_score < terminate_threshold or session.status != ExamSession.SessionStatus.IN_PROGRESS:
         return False
 
     session.status = ExamSession.SessionStatus.TERMINATED
@@ -178,29 +217,33 @@ def terminate_session_if_needed(session: ExamSession, risk_score: int) -> bool:
         subject="Exam Auto-Terminated",
         body=(
             f"Your exam '{session.assessment.title}' was automatically terminated due to "
-            f"risk score reaching {risk_score} (threshold: {TERMINATE_SCORE_THRESHOLD})."
+            f"risk score reaching {risk_score} (threshold: {terminate_threshold})."
         ),
         metadata={
             "assessment_id": str(session.assessment.id),
             "session_id": str(session.id),
             "reason": "risk_score_exceeded",
             "risk_score": risk_score,
-            "risk_threshold": TERMINATE_SCORE_THRESHOLD,
+            "risk_threshold": terminate_threshold,
         },
     )
     logger.info(
         "Session %s auto-terminated due to risk score: %s/%s",
         session.id,
         risk_score,
-        TERMINATE_SCORE_THRESHOLD,
+        terminate_threshold,
     )
     return True
 
 
 def process_risk_actions(session: ExamSession, previous_score: int, current_score: int) -> dict:
-    crossed_warning = previous_score < WARNING_SCORE_THRESHOLD <= current_score
-    crossed_flag = previous_score < FLAG_SCORE_THRESHOLD <= current_score
-    crossed_terminate = previous_score < TERMINATE_SCORE_THRESHOLD <= current_score
+    thresholds = get_session_risk_thresholds(session)
+    warning_threshold = int(thresholds["warning"])
+    flag_threshold = int(thresholds["flag"])
+    terminate_threshold = int(thresholds["terminate"])
+    crossed_warning = previous_score < warning_threshold <= current_score
+    crossed_flag = previous_score < flag_threshold <= current_score
+    crossed_terminate = previous_score < terminate_threshold <= current_score
 
     from apps.notifications.services import NotificationService
 
@@ -217,7 +260,7 @@ def process_risk_actions(session: ExamSession, previous_score: int, current_scor
                 "assessment_id": str(session.assessment.id),
                 "action": "proctoring_warning",
                 "risk_score": current_score,
-                "threshold": WARNING_SCORE_THRESHOLD,
+                "threshold": warning_threshold,
             },
         )
 
@@ -246,16 +289,18 @@ def process_risk_actions(session: ExamSession, previous_score: int, current_scor
                 "course_id": str(session.assessment.course.id),
                 "action": "proctoring_flagged",
                 "risk_score": current_score,
-                "threshold": FLAG_SCORE_THRESHOLD,
+                "threshold": flag_threshold,
             },
         )
 
     is_terminated = terminate_session_if_needed(session, current_score)
     return {
         "warning_triggered": crossed_warning,
-        "is_flagged": current_score >= FLAG_SCORE_THRESHOLD,
+        "is_flagged": current_score >= flag_threshold,
         "is_terminated": is_terminated,
         "crossed_terminate": crossed_terminate,
+        "thresholds": thresholds,
+        "risk_level": get_risk_level(current_score, thresholds),
     }
 
 
@@ -624,10 +669,12 @@ class ProctoringViewSet(viewsets.ViewSet):
             "violations": ProctoringViolationSerializer(created_violations, many=True).data,
             "total_violations": total_violations,
             "risk_score": risk_score,
+            "risk_level": risk_actions["risk_level"],
+            "risk_thresholds": risk_actions["thresholds"],
             "is_flagged": risk_actions["is_flagged"],
             "warning_triggered": risk_actions["warning_triggered"],
             "is_terminated": is_terminated,
-            "violations_exceeded": risk_score >= TERMINATE_SCORE_THRESHOLD
+            "violations_exceeded": risk_score >= int(risk_actions["thresholds"]["terminate"])
         })
 
     # ... Keep other methods (session_status, etc) same or minimal update ...
@@ -647,6 +694,7 @@ class ProctoringViewSet(viewsets.ViewSet):
         violations = ProctoringViolation.objects.filter(session=session, is_false_positive=False)
         violation_counts = violations.values("violation_type").annotate(count=Count("id"))
         risk_score = get_session_risk_score(session)
+        thresholds = get_session_risk_thresholds(session)
         
         face_registered = StudentFaceReference.objects.filter(student=session.student, is_active=True).exists()
         
@@ -655,7 +703,9 @@ class ProctoringViewSet(viewsets.ViewSet):
             "total_snapshots": ProctoringSnapshot.objects.filter(session=session).count(),
             "total_violations": violations.count(),
             "risk_score": risk_score,
-            "is_flagged": risk_score >= FLAG_SCORE_THRESHOLD,
+            "risk_level": get_risk_level(risk_score, thresholds),
+            "risk_thresholds": thresholds,
+            "is_flagged": risk_score >= int(thresholds["flag"]),
             "violation_counts": {v["violation_type"]: v["count"] for v in violation_counts},
             "is_terminated": session.status == ExamSession.SessionStatus.TERMINATED,
             "face_registered": face_registered,
@@ -735,6 +785,7 @@ class ProctoringViewSet(viewsets.ViewSet):
                 is_false_positive=False,
             ).count()
             risk_score = get_session_risk_score(session)
+            thresholds = get_session_risk_thresholds(session)
             is_terminated = terminate_session_if_needed(session, risk_score)
             return Response(
                 {
@@ -742,9 +793,11 @@ class ProctoringViewSet(viewsets.ViewSet):
                     "violation_type": violation_type,
                     "total_violations": total_violations,
                     "risk_score": risk_score,
-                    "is_flagged": risk_score >= FLAG_SCORE_THRESHOLD,
+                    "risk_level": get_risk_level(risk_score, thresholds),
+                    "risk_thresholds": thresholds,
+                    "is_flagged": risk_score >= int(thresholds["flag"]),
                     "is_terminated": is_terminated,
-                    "violations_exceeded": risk_score >= TERMINATE_SCORE_THRESHOLD,
+                    "violations_exceeded": risk_score >= int(thresholds["terminate"]),
                 },
                 status=status.HTTP_200_OK,
             )
@@ -775,10 +828,12 @@ class ProctoringViewSet(viewsets.ViewSet):
                 "occurred_at": v.occurred_at,
                 "total_violations": total_violations,
                 "risk_score": risk_score,
+                "risk_level": risk_actions["risk_level"],
+                "risk_thresholds": risk_actions["thresholds"],
                 "is_flagged": risk_actions["is_flagged"],
                 "warning_triggered": risk_actions["warning_triggered"],
                 "is_terminated": is_terminated,
-                "violations_exceeded": risk_score >= TERMINATE_SCORE_THRESHOLD,
+                "violations_exceeded": risk_score >= int(risk_actions["thresholds"]["terminate"]),
             },
             status=status.HTTP_201_CREATED,
         )

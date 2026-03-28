@@ -516,6 +516,12 @@ def analyze_snapshot_hybrid(
     # YOLO detection (fast, free, local)
     yolo_result = analyze_frame_for_proctoring(image_data)
     pose_result = estimate_head_pose_with_opencv(image_data)
+    pose_faces_detected = int(pose_result.get("faces_detected", 0) or 0)
+    yolo_person_count = int(getattr(yolo_result, "person_count", 0) or 0)
+
+    # OpenCV face cascades are useful for head pose, but they are noticeably less reliable
+    # than YOLO for raw person-counting in webcam conditions. Prefer the stronger count when present.
+    faces_detected = max(pose_faces_detected, yolo_person_count)
     
     # Build prohibited objects list from YOLO
     prohibited = []
@@ -551,7 +557,7 @@ def analyze_snapshot_hybrid(
     
     # Initialize result with YOLO data
     result: AnalysisResult = {
-        "faces_detected": int(pose_result.get("faces_detected", 0)),
+        "faces_detected": faces_detected,
         "face_locations": [],
         "objects_detected": objects_detected,
         "prohibited_objects": prohibited,
